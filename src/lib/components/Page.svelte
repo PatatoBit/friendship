@@ -364,6 +364,21 @@
 		await tick();
 	}
 
+	function pruneEmptyText(exceptId?: number | null) {
+		const next = items.filter(
+			(i) => !isText(i) || i.value.trim() || i.id === exceptId || i.id === editingId
+		);
+		if (next.length === items.length) return;
+		items = next;
+		if (selectedId != null && !items.some((i) => i.id === selectedId)) selectedId = null;
+		scheduleSave();
+	}
+
+	function deselect() {
+		selectedId = null;
+		pruneEmptyText();
+	}
+
 	function commitText(forId?: number) {
 		if (editingId == null || interacting) return;
 		if (forId != null && editingId !== forId) return;
@@ -373,6 +388,10 @@
 		const item = items.find((i) => i.id === id);
 		if (!item || !isText(item)) return;
 		item.value = item.value.trimEnd();
+		if (!item.value.trim()) {
+			deleteItem(id);
+			return;
+		}
 		scheduleSave();
 	}
 
@@ -548,11 +567,15 @@
 			}
 			haptic('medium');
 			scheduleSave();
-			if (wasEditing) requestAnimationFrame(() => syncKeyboardShift());
+			if (wasEditing && editingId === item.id) {
+				editor?.focus({ preventScroll: true });
+				requestAnimationFrame(() => syncKeyboardShift());
+			}
 			return;
 		}
 		if (isSticker(item)) {
 			commitText();
+			pruneEmptyText(item.id);
 			selectedId = item.id;
 			haptic('light');
 			return;
@@ -565,6 +588,7 @@
 			if (editOnTap) {
 				startEditing(item.id);
 			} else {
+				pruneEmptyText(item.id);
 				selectedId = item.id;
 			}
 			haptic('light');
@@ -575,7 +599,7 @@
 		const changed = tool !== 'draw' || drawMode !== mode;
 		tool = 'draw';
 		drawMode = mode;
-		selectedId = null;
+		deselect();
 		if (changed) haptic('selection');
 	}
 
@@ -583,7 +607,7 @@
 		const changed = tool !== 'text';
 		tool = 'text';
 		drawMode = 'pencil';
-		selectedId = null;
+		deselect();
 		if (changed) haptic('selection');
 	}
 
@@ -597,7 +621,7 @@
 
 	function down(e: PointerEvent) {
 		const p = pos(e);
-		selectedId = null;
+		deselect();
 		if (tool === 'draw') {
 			commitText();
 			drawing = true;
@@ -732,11 +756,11 @@
 
 	function endResize() {
 		if (!boxResize) return;
-		const wasText = isText(boxResize.item);
+		const id = boxResize.item.id;
 		boxResize = null;
 		interacting = false;
 		scheduleSave();
-		if (wasText) editor?.focus({ preventScroll: true });
+		if (editingId === id) editor?.focus({ preventScroll: true });
 	}
 
 	function beginRotate(e: PointerEvent, item: Item) {
@@ -763,11 +787,11 @@
 
 	function endRotate() {
 		if (!boxRotate) return;
-		const wasText = isText(boxRotate.item);
+		const id = boxRotate.item.id;
 		boxRotate = null;
 		interacting = false;
 		scheduleSave();
-		if (wasText) editor?.focus({ preventScroll: true });
+		if (editingId === id) editor?.focus({ preventScroll: true });
 	}
 
 	function onEditorBlur(id: number) {
@@ -1209,6 +1233,10 @@
 		box-shadow: 0 2px 12px oklch(0.3 0.02 52 / 0.08);
 		overflow: hidden;
 		touch-action: none;
+
+		&.lifted {
+			z-index: 2;
+		}
 	}
 	.clear-btn {
 		position: absolute;
@@ -1360,6 +1388,11 @@
 			box-shadow: 0 0 0 2px color-mix(in oklch, var(--select) 45%, transparent);
 		}
 
+		&.selected {
+			overflow: visible;
+			box-shadow: 0 0 0 2px var(--select);
+		}
+
 		&.moving {
 			opacity: 0.92;
 			cursor: grabbing;
@@ -1380,6 +1413,15 @@
 			touch-action: none;
 			user-select: text;
 		}
+	}
+	.text-content {
+		display: block;
+		width: fit-content;
+		max-width: 100%;
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+		word-break: break-word;
+		pointer-events: auto;
 	}
 	.editor {
 		display: block;
