@@ -6,7 +6,7 @@
 	import SizePicker from './SizePicker.svelte';
 	import StickerSheet from './StickerSheet.svelte';
 
-	type Tool = 'draw' | 'text';
+	type Tool = 'draw' | 'text' | 'select';
 	type DrawMode = 'pencil' | 'eraser';
 	type TextItem = {
 		id: number;
@@ -399,6 +399,10 @@
 			const id = Date.now();
 			pushHistory();
 			items = [...items, { id, kind: 'sticker', x, y, w, h, src }];
+			tool = 'select';
+			drawMode = 'pencil';
+			eraserCursor = null;
+			editingId = null;
 			selectedId = id;
 			haptic('light');
 			scheduleSave();
@@ -542,8 +546,8 @@
 	function canDragPress() {
 		if (!press) return false;
 		const { item, wasEditing } = press;
-		// Stickers / text only move once already selected (or editing)
-		return selectedId === item.id || wasEditing;
+		// Select mode: grab and move right away. Otherwise only once selected / editing.
+		return tool === 'select' || selectedId === item.id || wasEditing;
 	}
 
 	function startDragging() {
@@ -551,6 +555,7 @@
 		press.dragging = true;
 		interacting = true;
 		movingId = press.item.id;
+		selectedId = press.item.id;
 		pushHistory();
 		resetTrash();
 		window.getSelection()?.removeAllRanges();
@@ -559,6 +564,9 @@
 	}
 
 	function beginPress(e: PointerEvent, item: Item) {
+		// Drawing goes through stickers/text; only select (and text editing) grab them
+		if (tool === 'draw') return;
+		if (tool === 'text' && isSticker(item)) return;
 		e.stopPropagation();
 		if (press) clearPress();
 		boxResize = null;
@@ -669,22 +677,45 @@
 		if (!drawing) eraserCursor = null;
 	}
 
+	function enterSelectMode() {
+		tool = 'select';
+		drawMode = 'pencil';
+		eraserCursor = null;
+		commitText();
+		deselect();
+		haptic('selection');
+	}
+
 	function selectDraw(mode: DrawMode = 'pencil') {
-		const changed = tool !== 'draw' || drawMode !== mode;
+		// Tap the active draw tool again to drop into move/select mode
+		if (tool === 'draw' && drawMode === mode) {
+			enterSelectMode();
+			return;
+		}
 		tool = 'draw';
 		drawMode = mode;
 		if (mode !== 'eraser') eraserCursor = null;
 		deselect();
-		if (changed) haptic('selection');
+		haptic('selection');
 	}
 
 	function selectText() {
-		const changed = tool !== 'text';
+		if (tool === 'text') {
+			enterSelectMode();
+			return;
+		}
 		tool = 'text';
 		drawMode = 'pencil';
 		eraserCursor = null;
 		deselect();
-		if (changed) haptic('selection');
+		haptic('selection');
+	}
+
+	function itemInteractive(item: Item) {
+		if (editingId === item.id) return true;
+		if (tool === 'select') return true;
+		if (tool === 'text' && isText(item)) return true;
+		return false;
 	}
 
 	function strokeTo(x: number, y: number) {
@@ -1002,6 +1033,7 @@
 					class:selected={selectedId === item.id}
 					class:moving={movingId === item.id}
 					class:trashing={movingId === item.id && overTrash}
+					class:pass-through={!itemInteractive(item)}
 					style:left="{item.x}px"
 					style:top="{item.y}px"
 					style:width="{item.w}px"
@@ -1132,6 +1164,7 @@
 					class:selected={selectedId === item.id}
 					class:moving={movingId === item.id}
 					class:trashing={movingId === item.id && overTrash}
+					class:pass-through={!itemInteractive(item)}
 					style:left="{item.x}px"
 					style:top="{item.y}px"
 					style:width={item.w ? `${item.w}px` : undefined}
@@ -1256,6 +1289,7 @@
 			class="tool"
 			class:active={tool === 'text'}
 			aria-label="Text"
+			aria-pressed={tool === 'text'}
 			onclick={selectText}
 		>
 			<svg viewBox="0 0 24 24" aria-hidden="true">
@@ -1526,6 +1560,10 @@
 			-webkit-user-drag: none;
 		}
 
+		&.pass-through {
+			pointer-events: none;
+		}
+
 		&.moving {
 			opacity: 0.92;
 			cursor: grabbing;
@@ -1594,6 +1632,10 @@
 			box-shadow: 0 0 0 2px var(--select);
 			touch-action: none;
 			user-select: text;
+		}
+
+		&.pass-through {
+			pointer-events: none;
 		}
 	}
 	.text-content {
