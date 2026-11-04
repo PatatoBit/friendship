@@ -912,7 +912,24 @@
 							onpointermove={onRotateMove}
 							onpointerup={endRotate}
 							onpointercancel={endRotate}
-						></button>
+						>
+							<svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+								<path
+									stroke="currentColor"
+									stroke-width="1.75"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									d="M13.2 8A5.2 5.2 0 1 1 11.7 4.3L13.2 5.5"
+								/>
+								<path
+									stroke="currentColor"
+									stroke-width="1.75"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									d="M13.2 2.3v3.2h-3.2"
+								/>
+							</svg>
+						</button>
 						<button
 							type="button"
 							class="resize-handle"
@@ -968,7 +985,24 @@
 						onpointermove={onRotateMove}
 						onpointerup={endRotate}
 						onpointercancel={endRotate}
-					></button>
+					>
+						<svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+							<path
+								stroke="currentColor"
+								stroke-width="1.75"
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								d="M13.2 8A5.2 5.2 0 1 1 11.7 4.3L13.2 5.5"
+							/>
+							<path
+								stroke="currentColor"
+								stroke-width="1.75"
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								d="M13.2 2.3v3.2h-3.2"
+							/>
+						</svg>
+					</button>
 					<button
 						type="button"
 						class="resize-handle"
@@ -1009,7 +1043,24 @@
 							onpointermove={onRotateMove}
 							onpointerup={endRotate}
 							onpointercancel={endRotate}
-						></button>
+						>
+							<svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+								<path
+									stroke="currentColor"
+									stroke-width="1.75"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									d="M13.2 8A5.2 5.2 0 1 1 11.7 4.3L13.2 5.5"
+								/>
+								<path
+									stroke="currentColor"
+									stroke-width="1.75"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									d="M13.2 2.3v3.2h-3.2"
+								/>
+							</svg>
+						</button>
 						<button
 							type="button"
 							class="resize-handle"
@@ -1485,11 +1536,14 @@
 		position: absolute;
 		right: -0.45rem;
 		top: -1.75rem;
+		display: grid;
+		place-items: center;
 		width: 1.15rem;
 		height: 1.15rem;
 		padding: 0;
 		border: 2px solid var(--select);
 		border-radius: 999px;
+		color: var(--select);
 		background: var(--surface);
 		box-shadow: none;
 		touch-action: none;
@@ -1497,6 +1551,12 @@
 		opacity: 0;
 		animation: handle-in 180ms var(--ease-out) forwards;
 		transition: transform var(--duration-press) ease-out;
+
+		svg {
+			width: 0.7rem;
+			height: 0.7rem;
+			pointer-events: none;
+		}
 
 		&:active {
 			cursor: grabbing;
@@ -1513,17 +1573,6 @@
 			height: 0.7rem;
 			margin-left: -1px;
 			background: var(--select);
-			pointer-events: none;
-		}
-
-		// Curved arrow cue inside the knob
-		&::after {
-			content: '';
-			position: absolute;
-			inset: 0.18rem;
-			border: 2px solid var(--select);
-			border-right-color: transparent;
-			border-radius: 999px;
 			pointer-events: none;
 		}
 	}
