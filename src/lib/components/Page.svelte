@@ -362,6 +362,24 @@
 		scheduleSave();
 	}
 
+	function clearPage() {
+		if (!ready) return;
+		commitText();
+		clearPress();
+		boxResize = null;
+		boxRotate = null;
+		editingId = null;
+		selectedId = null;
+		items = [];
+		if (ctx && board) {
+			const r = board.getBoundingClientRect();
+			ctx.globalCompositeOperation = 'source-over';
+			ctx.clearRect(0, 0, r.width, r.height);
+		}
+		haptic('error');
+		scheduleSave();
+	}
+
 	function updateTrashProximity(clientX: number, clientY: number) {
 		if (!trashEl || movingId == null) {
 			resetTrash();
@@ -723,6 +741,15 @@
 			onpointerup={up}
 			onpointercancel={up}
 		></canvas>
+		<button
+			type="button"
+			class="clear-btn"
+			aria-label="Clear page"
+			disabled={!ready}
+			onclick={clearPage}
+		>
+			Clear
+		</button>
 		<div
 			bind:this={trashEl}
 			class="trash"
@@ -1058,6 +1085,7 @@
 		.eraser-slot,
 		.resize-handle,
 		.rotate-handle,
+		.clear-btn,
 		.trash,
 		.trash-lid,
 		.trash-icon,
@@ -1082,6 +1110,32 @@
 		box-shadow: 0 2px 12px oklch(0.3 0.02 52 / 0.08);
 		overflow: hidden;
 		touch-action: none;
+	}
+	.clear-btn {
+		position: absolute;
+		top: 0.85rem;
+		right: 0.85rem;
+		z-index: 30;
+		height: 2.4rem;
+		padding: 0 0.95rem;
+		font-size: 0.95rem;
+		font-weight: 400;
+		letter-spacing: 0.01em;
+		color: var(--ink);
+		background: oklch(0.92 0.015 82 / 0.92);
+		box-shadow: 0 2px 10px oklch(0.3 0.02 52 / 0.12);
+		transition:
+			transform var(--duration-press) ease-out,
+			background-color 160ms ease,
+			opacity 160ms ease;
+
+		&:active:not(:disabled) {
+			transform: scale(0.96);
+		}
+
+		&:disabled {
+			opacity: 0.45;
+		}
 	}
 	.trash {
 		position: absolute;
