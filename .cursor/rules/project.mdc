@@ -1,0 +1,10 @@
+---
+description: Friendship Book project conventions
+alwaysApply: true
+---
+- A mobile-first friendship book web app (phones and tablets): type, draw, and place stickers.
+- Stack: SvelteKit with Svelte 5 runes ($state, $props), TypeScript, SCSS (`<style lang="scss">`), Supabase (`src/lib/supabase.ts`).
+- Package manager: pnpm only (`pnpm dev --host`, `pnpm build`, `pnpm check`).
+- This SvelteKit version uses `#lib` instead of `$lib` for imports.
+- Supabase env vars: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` in `.env` (never commit it).
+- Use pointer events and `touch-action: none` for drawing; respect safe-area insets.
