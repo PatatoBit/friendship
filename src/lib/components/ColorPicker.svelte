@@ -1,7 +1,7 @@
 <script lang="ts">
 	let {
-		color = $bindable('#2c2622'),
-		presets = ['#2c2622', '#5c4638', '#8a6550', '#6b6358', '#4a5560', '#556048', '#c4b8a8', '#f7f3eb']
+		color = $bindable('#3a2e2a'),
+		presets = ['#3a2e2a', '#ff7aa2', '#6bb5ff', '#7bd389', '#ffc94d', '#ffffff', '#c084fc', '#fb7185']
 	}: { color?: string; presets?: string[] } = $props();
 
 	let open = $state(false);

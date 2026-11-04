@@ -31,7 +31,7 @@
 
 	let tool = $state<Tool>('draw');
 	let drawMode = $state<DrawMode>('pencil');
-	let color = $state('#2c2622');
+	let color = $state('#3a2e2a');
 	let items = $state<Item[]>([]);
 	let editingId = $state<number | null>(null);
 	let canvas: HTMLCanvasElement;
