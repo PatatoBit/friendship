@@ -66,6 +66,9 @@
 	let drawing = false;
 	let drawX = 0;
 	let drawY = 0;
+	/** Midpoint of the last smoothed segment — keeps strokes incremental (not O(n²)) */
+	let drawMidX = 0;
+	let drawMidY = 0;
 	/** Live eraser preview under the pointer (CSS px diameter matches erase width) */
 	let eraserCursor = $state<{ x: number; y: number } | null>(null);
 	let interacting = false;
@@ -106,13 +109,19 @@
 		hitText: boolean;
 	} | null = null;
 	let saveTimer: ReturnType<typeof setTimeout> | null = null;
+	let persistGen = 0;
 	let ready = $state(false);
 	/** Pixels to lift the board so the active text stays above the soft keyboard */
 	let keyboardOffset = $state(0);
 	const MAX_HISTORY = 40;
 	type HistoryEntry = { items: Item[]; drawing: HTMLCanvasElement };
-	let history = $state<HistoryEntry[]>([]);
-	let canUndo = $derived(ready && history.length > 0);
+	/** Plain array — avoid $state re-renders on every stroke */
+	let history: HistoryEntry[] = [];
+	let canUndo = $state(false);
+	/** Pre-copied undo point so stroke start stays cheap */
+	let undoSnapshot: HistoryEntry | null = null;
+	let undoCaptureTimer: ReturnType<typeof setTimeout> | null = null;
+	let undoCaptureGen = 0;
 
 	function resize() {
 		const r = board.getBoundingClientRect();
@@ -161,11 +170,13 @@
 	}
 
 	async function persistNow() {
-		if (!ready || !board || !canvas) return;
+		if (!ready || !board || !canvas || drawing) return;
+		const gen = persistGen;
 		try {
-			const drawing = await canvasToPngBlob(canvas);
+			const drawingBlob = await canvasToPngBlob(canvas);
+			if (gen !== persistGen || drawing) return;
 			await savePage({
-				drawing,
+				drawing: drawingBlob,
 				boardWidth: board.clientWidth,
 				boardHeight: board.clientHeight,
 				items: serializedItems()
@@ -176,28 +187,95 @@
 	}
 
 	function scheduleSave() {
-		if (!ready) return;
+		if (!ready || drawing) return;
 		if (saveTimer) clearTimeout(saveTimer);
 		saveTimer = setTimeout(() => {
 			saveTimer = null;
+			if (drawing) return;
 			void persistNow();
-		}, 280);
+		}, 400);
+	}
+
+	function cancelScheduledSave() {
+		if (saveTimer) {
+			clearTimeout(saveTimer);
+			saveTimer = null;
+		}
+		persistGen += 1;
 	}
 
 	function cloneItems(list: Item[]): Item[] {
 		return list.map((item) => ({ ...item }));
 	}
 
+	function snapshotDrawing(): HTMLCanvasElement {
+		const drawingSnap = document.createElement('canvas');
+		drawingSnap.width = canvas.width;
+		drawingSnap.height = canvas.height;
+		drawingSnap.getContext('2d')!.drawImage(canvas, 0, 0);
+		return drawingSnap;
+	}
+
+	function captureUndoSnapshot() {
+		if (!ready || !canvas) return;
+		undoSnapshot = { items: cloneItems(items), drawing: snapshotDrawing() };
+	}
+
+	function commitUndoSnapshot() {
+		if (!undoSnapshot) return;
+		history.push(undoSnapshot);
+		if (history.length > MAX_HISTORY) history.shift();
+		undoSnapshot = null;
+		// Only touch $state when the button actually enables — avoids re-render per stroke
+		if (!canUndo) canUndo = true;
+	}
+
+	function cancelUndoCapture() {
+		undoCaptureGen += 1;
+		if (undoCaptureTimer) {
+			clearTimeout(undoCaptureTimer);
+			undoCaptureTimer = null;
+		}
+	}
+
+	/** Sync capture + commit — for text/sticker/move where we aren't mid-ink */
 	function pushHistory() {
 		if (!ready || !canvas) return;
-		const drawing = document.createElement('canvas');
-		drawing.width = canvas.width;
-		drawing.height = canvas.height;
-		drawing.getContext('2d')!.drawImage(canvas, 0, 0);
-		history = [
-			...history.slice(-(MAX_HISTORY - 1)),
-			{ items: cloneItems(items), drawing }
-		];
+		cancelUndoCapture();
+		captureUndoSnapshot();
+		commitUndoSnapshot();
+	}
+
+	/**
+	 * After a stroke, wait for a quiet moment then snapshot async.
+	 * Never copy on pen-down — that was the draw cooldown.
+	 */
+	function queueCaptureUndoSnapshot() {
+		cancelUndoCapture();
+		const gen = undoCaptureGen;
+		undoCaptureTimer = setTimeout(() => {
+			undoCaptureTimer = null;
+			if (gen !== undoCaptureGen || drawing || !ready || !canvas) return;
+			const itemsSnap = cloneItems(items);
+			const source = canvas;
+			void createImageBitmap(source)
+				.then((bmp) => {
+					if (gen !== undoCaptureGen || drawing) {
+						bmp.close();
+						return;
+					}
+					const drawingSnap = document.createElement('canvas');
+					drawingSnap.width = bmp.width;
+					drawingSnap.height = bmp.height;
+					drawingSnap.getContext('2d')!.drawImage(bmp, 0, 0);
+					bmp.close();
+					if (gen !== undoCaptureGen || drawing) return;
+					undoSnapshot = { items: itemsSnap, drawing: drawingSnap };
+				})
+				.catch(() => {
+					/* ignore — next idle will retry */
+				});
+		}, 1200);
 	}
 
 	function restoreCanvasFrom(source: HTMLCanvasElement) {
@@ -210,8 +288,11 @@
 
 	function undoPage() {
 		if (!canUndo) return;
-		const entry = history[history.length - 1];
-		history = history.slice(0, -1);
+		const entry = history.pop();
+		if (!entry) return;
+		canUndo = history.length > 0;
+		undoSnapshot = null;
+		cancelUndoCapture();
 		drawing = false;
 		eraserCursor = null;
 		commitText();
@@ -224,6 +305,7 @@
 		restoreCanvasFrom(entry.drawing);
 		haptic('selection');
 		scheduleSave();
+		queueCaptureUndoSnapshot();
 	}
 
 	async function restoreDrawing(blob: Blob) {
@@ -250,7 +332,10 @@
 			} catch (err) {
 				console.error(err);
 			} finally {
-				if (!cancelled) ready = true;
+				if (!cancelled) {
+					ready = true;
+					captureUndoSnapshot();
+				}
 			}
 		})();
 
@@ -271,12 +356,21 @@
 		vv?.addEventListener('resize', onViewport);
 		vv?.addEventListener('scroll', onViewport);
 
+		// iPadOS Scribble steals rapid Apple Pencil pointerdowns (every-other-stroke
+		// "cooldown"). Non-passive touchmove preventDefault marks the surface as
+		// handled so Scribble backs off. See WebKit 217430 / mikepk scribble bug.
+		const blockScribble = (e: TouchEvent) => e.preventDefault();
+		canvas.addEventListener('touchmove', blockScribble, { passive: false });
+		board.addEventListener('touchmove', blockScribble, { passive: false });
+
 		return () => {
 			cancelled = true;
 			window.removeEventListener('resize', resize);
 			window.removeEventListener('pagehide', onHide);
 			vv?.removeEventListener('resize', onViewport);
 			vv?.removeEventListener('scroll', onViewport);
+			canvas.removeEventListener('touchmove', blockScribble);
+			board.removeEventListener('touchmove', blockScribble);
 			if (saveTimer) clearTimeout(saveTimer);
 			clearPress();
 			void persistNow();
@@ -725,36 +819,55 @@
 		deselect();
 	}
 
+	function applyStrokeWidth(pressure: number, pointerType: string) {
+		const p = pointerType === 'pen' ? 0.55 + pressure * 0.9 : 1;
+		ctx.lineWidth = drawMode === 'eraser' ? eraserDiameter(p) : brushSize * p;
+	}
+
+	/** Stroke only the new segment — Apple Pencil coalesced points make full-path re-stroke unusable */
 	function strokeTo(x: number, y: number) {
 		const mx = (drawX + x) / 2;
 		const my = (drawY + y) / 2;
+		ctx.beginPath();
+		ctx.moveTo(drawMidX, drawMidY);
 		ctx.quadraticCurveTo(drawX, drawY, mx, my);
+		ctx.stroke();
+		drawMidX = mx;
+		drawMidY = my;
 		drawX = x;
 		drawY = y;
 	}
 
 	function down(e: PointerEvent) {
 		const p = pos(e);
-		deselect();
 		if (tool === 'draw') {
-			commitText();
-			pushHistory();
+			e.preventDefault();
+			// Cancel background work first so it can't contend with ink
+			cancelScheduledSave();
+			cancelUndoCapture();
+			// Lay ink immediately — no canvas copies, no reactive bookkeeping
 			drawing = true;
 			canvas.setPointerCapture(e.pointerId);
-			const pressure = e.pointerType === 'pen' ? 0.55 + e.pressure * 0.9 : 1;
-			const penWidth = brushSize * pressure;
-			ctx.lineWidth = drawMode === 'eraser' ? eraserDiameter(pressure) : penWidth;
 			ctx.strokeStyle = color;
 			ctx.globalCompositeOperation = drawMode === 'eraser' ? 'destination-out' : 'source-over';
+			applyStrokeWidth(e.pressure, e.pointerType);
 			drawX = p.x;
 			drawY = p.y;
+			drawMidX = p.x;
+			drawMidY = p.y;
 			if (drawMode === 'eraser') eraserCursor = { x: p.x, y: p.y };
 			ctx.beginPath();
 			ctx.moveTo(p.x, p.y);
 			// Dot so a tap still leaves a mark
 			ctx.lineTo(p.x, p.y);
 			ctx.stroke();
+			// Bookkeeping after the first mark (cheap; skips if snapshot isn't ready yet)
+			if (undoSnapshot) commitUndoSnapshot();
+			if (selectedId != null) selectedId = null;
+			if (editingId != null) commitText();
+			window.getSelection()?.removeAllRanges();
 		} else if (tool === 'text') {
+			deselect();
 			// Tap out while editing = confirm (keep the box). Don't start a new one.
 			if (editingId != null) {
 				commitText();
@@ -784,27 +897,33 @@
 			];
 			haptic('light');
 			startEditing(id);
+		} else {
+			deselect();
 		}
 	}
 
 	function move(e: PointerEvent) {
 		if (tool === 'draw' && drawMode === 'eraser') setEraserCursor(e);
 		if (!drawing) return;
+		e.preventDefault();
+		// One layout read per event — Pencil coalesced lists are huge
+		const rect = board.getBoundingClientRect();
 		const coalesced = e.getCoalescedEvents?.() ?? [];
 		const samples = coalesced.length ? coalesced : [e];
 		for (const sample of samples) {
-			const p = pos(sample);
-			strokeTo(p.x, p.y);
+			if (e.pointerType === 'pen' || sample.pointerType === 'pen') {
+				applyStrokeWidth(sample.pressure, 'pen');
+			}
+			strokeTo(sample.clientX - rect.left, sample.clientY - rect.top);
 		}
-		ctx.stroke();
 	}
 
 	function up(e?: PointerEvent) {
 		if (!drawing) return;
 		if (e) {
 			const p = pos(e);
-			ctx.lineTo(p.x, p.y);
-			ctx.stroke();
+			if (e.pointerType === 'pen') applyStrokeWidth(e.pressure, 'pen');
+			strokeTo(p.x, p.y);
 			if (drawMode === 'eraser') {
 				if (e.pointerType === 'mouse') eraserCursor = { x: p.x, y: p.y };
 				else eraserCursor = null;
@@ -815,6 +934,7 @@
 		drawing = false;
 		ctx.globalCompositeOperation = 'source-over';
 		scheduleSave();
+		queueCaptureUndoSnapshot();
 	}
 
 	function beginResize(e: PointerEvent, item: Item) {
@@ -961,6 +1081,8 @@
 		bind:this={board}
 		style:transform={keyboardOffset > 0 ? `translateY(${-keyboardOffset}px)` : undefined}
 		onpointerdown={onBoardPointerDown}
+		oncontextmenu={(e) => e.preventDefault()}
+		onselectstart={(e) => e.preventDefault()}
 	>
 		<canvas
 			bind:this={canvas}
@@ -972,6 +1094,8 @@
 			onpointercancel={up}
 			onpointerenter={setEraserCursor}
 			onpointerleave={clearEraserCursor}
+			oncontextmenu={(e) => e.preventDefault()}
+			onselectstart={(e) => e.preventDefault()}
 		></canvas>
 		{#if eraserCursor && tool === 'draw' && drawMode === 'eraser'}
 			<div
@@ -1320,6 +1444,9 @@
 		flex-direction: column;
 		height: 100dvh;
 		padding-top: env(safe-area-inset-top);
+		user-select: none;
+		-webkit-user-select: none;
+		-webkit-touch-callout: none;
 	}
 	.toolbar {
 		display: flex;
@@ -1329,6 +1456,9 @@
 		padding: 0.75rem;
 		padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
 		overflow: visible;
+		user-select: none;
+		-webkit-user-select: none;
+		-webkit-touch-callout: none;
 	}
 	.draw-pill {
 		display: grid;
@@ -1438,6 +1568,9 @@
 		box-shadow: 0 2px 12px oklch(0.3 0.02 52 / 0.08);
 		overflow: hidden;
 		touch-action: none;
+		user-select: none;
+		-webkit-user-select: none;
+		-webkit-touch-callout: none;
 
 		&.lifted {
 			z-index: 2;
@@ -1533,6 +1666,12 @@
 		z-index: 2;
 		width: 100%;
 		height: 100%;
+		touch-action: none;
+		user-select: none;
+		-webkit-user-select: none;
+		-webkit-touch-callout: none;
+		-webkit-user-drag: none;
+		-webkit-tap-highlight-color: transparent;
 
 		&.eraser {
 			cursor: none;

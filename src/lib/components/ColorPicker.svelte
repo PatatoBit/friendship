@@ -210,6 +210,9 @@
 	.picker {
 		position: relative;
 		flex-shrink: 0;
+		user-select: none;
+		-webkit-user-select: none;
+		-webkit-touch-callout: none;
 	}
 	.trigger {
 		width: 2.4rem;
@@ -219,6 +222,11 @@
 		box-shadow:
 			0 0 0 1.5px oklch(0.3 0.02 52 / 0.25),
 			0 1px 4px oklch(0.3 0.02 52 / 0.1);
+		user-select: none;
+		-webkit-user-select: none;
+		-webkit-touch-callout: none;
+		-webkit-user-drag: none;
+		-webkit-tap-highlight-color: transparent;
 		transition: transform var(--duration-press) ease-out;
 
 		&:active {
@@ -279,6 +287,9 @@
 		width: 100%;
 		border-radius: 50%;
 		touch-action: none;
+		user-select: none;
+		-webkit-user-select: none;
+		-webkit-touch-callout: none;
 		cursor: crosshair;
 		background:
 			linear-gradient(
@@ -323,6 +334,11 @@
 		padding: 0;
 		border: 2px solid var(--surface);
 		box-shadow: 0 0 0 1px oklch(0.3 0.02 52 / 0.15);
+		user-select: none;
+		-webkit-user-select: none;
+		-webkit-touch-callout: none;
+		-webkit-user-drag: none;
+		-webkit-tap-highlight-color: transparent;
 		transition:
 			transform var(--duration-press) ease-out,
 			box-shadow var(--duration-press) ease;

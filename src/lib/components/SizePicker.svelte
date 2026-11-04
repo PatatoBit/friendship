@@ -107,6 +107,9 @@
 	.picker {
 		position: relative;
 		flex-shrink: 0;
+		user-select: none;
+		-webkit-user-select: none;
+		-webkit-touch-callout: none;
 	}
 	.trigger {
 		display: grid;
@@ -119,6 +122,10 @@
 		box-shadow:
 			0 0 0 1.5px oklch(0.3 0.02 52 / 0.25),
 			0 1px 4px oklch(0.3 0.02 52 / 0.1);
+		user-select: none;
+		-webkit-user-select: none;
+		-webkit-touch-callout: none;
+		-webkit-tap-highlight-color: transparent;
 		transition: transform var(--duration-press) ease-out;
 
 		&:active {
