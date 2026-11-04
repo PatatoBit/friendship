@@ -230,53 +230,51 @@
 			aria-label="Sticker sheet"
 			ontransitionend={onPopoverTransitionEnd}
 		>
-			<header class="header">
-				<h2>Stickers</h2>
-				<div class="mode" role="group" aria-label="Add as">
-					<button
-						type="button"
-						class="mode-btn"
-						aria-pressed={addMode === 'sticker'}
-						disabled={busy}
-						onclick={() => setAddMode('sticker')}
-					>
-						Sticker
-					</button>
-					<button
-						type="button"
-						class="mode-btn"
-						aria-pressed={addMode === 'image'}
-						disabled={busy}
-						onclick={() => setAddMode('image')}
-					>
-						Image
-					</button>
-				</div>
-			</header>
-
 			{#if error}
 				<p class="error" role="alert">{error}</p>
 			{/if}
 
 			<div class="grid">
-				<button
-					type="button"
-					class="cell upload"
-					aria-label={addMode === 'sticker' ? 'Upload sticker photo' : 'Upload image'}
-					disabled={busy}
-					onclick={openFilePicker}
-				>
-					<svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-						<path
-							stroke="currentColor"
-							stroke-width="2"
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							d="M12 5v14M5 12h14"
-						/>
-					</svg>
-					<span>{addMode === 'sticker' ? 'Sticker' : 'Image'}</span>
-				</button>
+				<div class="cell add">
+					<div class="mode" role="group" aria-label="Add as">
+						<button
+							type="button"
+							class="mode-btn"
+							aria-pressed={addMode === 'sticker'}
+							disabled={busy}
+							onclick={() => setAddMode('sticker')}
+						>
+							Sticker
+						</button>
+						<button
+							type="button"
+							class="mode-btn"
+							aria-pressed={addMode === 'image'}
+							disabled={busy}
+							onclick={() => setAddMode('image')}
+						>
+							Image
+						</button>
+					</div>
+					<button
+						type="button"
+						class="upload"
+						aria-label={addMode === 'sticker' ? 'Upload sticker photo' : 'Upload image'}
+						disabled={busy}
+						onclick={openFilePicker}
+					>
+						<svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+							<path
+								stroke="currentColor"
+								stroke-width="2"
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								d="M12 5v14M5 12h14"
+							/>
+						</svg>
+						<span>Add</span>
+					</button>
+				</div>
 
 				{#if busy && previewUrl}
 					<div class="cell processing" aria-live="polite" aria-busy="true">
@@ -402,58 +400,6 @@
 		}
 	}
 
-	.header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 0.5rem;
-		padding: 0 0.15rem;
-
-		h2 {
-			margin: 0;
-			font-size: 0.95rem;
-			font-weight: 700;
-			letter-spacing: 0.01em;
-		}
-	}
-
-	.mode {
-		display: inline-flex;
-		padding: 0.15rem;
-		border-radius: 999px;
-		background: color-mix(in oklch, var(--surface) 55%, var(--ink) 8%);
-	}
-
-	.mode-btn {
-		padding: 0.28rem 0.65rem;
-		border-radius: 999px;
-		border: none;
-		background: transparent;
-		box-shadow: none;
-		color: color-mix(in oklch, var(--ink) 72%, transparent);
-		font-size: 0.72rem;
-		font-weight: 700;
-		letter-spacing: 0.01em;
-		line-height: 1;
-		transition:
-			background-color var(--duration-press) ease,
-			color var(--duration-press) ease;
-
-		&[aria-pressed='true'] {
-			background: var(--paper);
-			color: var(--ink);
-			box-shadow: 0 1px 3px oklch(0.3 0.02 52 / 0.12);
-		}
-
-		&:disabled {
-			opacity: 0.55;
-		}
-
-		&:active:not(:disabled) {
-			transform: scale(0.97);
-		}
-	}
-
 	.error {
 		margin: 0;
 		padding: 0.5rem 0.65rem;
@@ -525,23 +471,91 @@
 		}
 	}
 
+	.add {
+		display: grid;
+		grid-template-rows: auto 1fr;
+		gap: 0.2rem;
+		padding: 0.3rem;
+		background: color-mix(in oklch, var(--surface) 70%, var(--ink) 6%);
+		color: var(--ink);
+		border: 1.5px dashed color-mix(in oklch, var(--ink) 22%, transparent);
+
+		&:active {
+			transform: none;
+		}
+	}
+
+	.mode {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 0.15rem;
+		padding: 0.12rem;
+		border-radius: 0.45rem;
+		background: color-mix(in oklch, var(--ink) 6%, transparent);
+	}
+
+	.mode-btn {
+		min-width: 0;
+		padding: 0.28rem 0.15rem;
+		border-radius: 0.35rem;
+		border: none;
+		background: transparent;
+		box-shadow: none;
+		color: color-mix(in oklch, var(--ink) 62%, transparent);
+		font-size: 0.58rem;
+		font-weight: 700;
+		letter-spacing: 0.01em;
+		line-height: 1;
+		transition:
+			background-color var(--duration-press) ease,
+			color var(--duration-press) ease;
+
+		&[aria-pressed='true'] {
+			background: var(--paper);
+			color: var(--ink);
+			box-shadow: 0 1px 2px oklch(0.3 0.02 52 / 0.1);
+		}
+
+		&:disabled {
+			opacity: 0.55;
+		}
+
+		&:active:not(:disabled) {
+			transform: scale(0.97);
+		}
+	}
+
 	.upload {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
 		justify-content: center;
-		gap: 0.2rem;
-		background: color-mix(in oklch, var(--surface) 70%, var(--ink) 6%);
-		color: var(--ink);
-		border: 1.5px dashed color-mix(in oklch, var(--ink) 22%, transparent);
+		gap: 0.15rem;
+		min-height: 0;
+		width: 100%;
+		padding: 0;
+		border: none;
+		border-radius: 0.4rem;
+		background: transparent;
+		box-shadow: none;
+		color: inherit;
+		transition: transform var(--duration-press) ease-out;
+
+		&:active:not(:disabled) {
+			transform: scale(0.96);
+		}
+
+		&:disabled {
+			opacity: 0.55;
+		}
 
 		svg {
-			width: 1.35rem;
-			height: 1.35rem;
+			width: 1.25rem;
+			height: 1.25rem;
 		}
 
 		span {
-			font-size: 0.72rem;
+			font-size: 0.68rem;
 			font-weight: 700;
 			line-height: 1;
 		}
