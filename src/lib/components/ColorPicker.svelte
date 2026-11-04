@@ -71,9 +71,10 @@
 		const cy = r.top + r.height / 2;
 		const dx = e.clientX - cx;
 		const dy = e.clientY - cy;
-		const radius = r.width / 2;
+		const radius = Math.max(r.width / 2, 1);
 		const dist = Math.min(Math.hypot(dx, dy) / radius, 1);
-		let h = (Math.atan2(dy, dx) * 180) / Math.PI + 90;
+		// 0° at top, clockwise — matches CSS conic-gradient
+		let h = (Math.atan2(dx, -dy) * 180) / Math.PI;
 		if (h < 0) h += 360;
 		applyHsv(h, dist * 100, val);
 	}
@@ -181,8 +182,8 @@
 	.popover {
 		position: absolute;
 		bottom: calc(100% + 0.6rem);
-		left: 50%;
-		transform: translateX(-50%);
+		right: 0;
+		left: auto;
 		z-index: 21;
 		width: min(16.5rem, calc(100vw - 1.5rem));
 		padding: 0.9rem;
@@ -201,10 +202,12 @@
 		touch-action: none;
 		cursor: crosshair;
 		background:
-			radial-gradient(circle closest-side, rgba(255, 255, 255, calc(1 - var(--v))) 0%, transparent 70%),
-			radial-gradient(circle closest-side, transparent 35%, rgba(0, 0, 0, calc(0.55 * (1 - var(--v)))) 100%),
+			linear-gradient(
+				rgba(0, 0, 0, calc(1 - var(--v))),
+				rgba(0, 0, 0, calc(1 - var(--v)))
+			),
+			radial-gradient(circle closest-side, #fff, transparent 70%),
 			conic-gradient(from 0deg, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
-		filter: brightness(calc(0.35 + var(--v) * 0.65));
 		box-shadow: inset 0 0 0 1px rgba(58, 46, 42, 0.08);
 	}
 	.thumb {
@@ -244,8 +247,6 @@
 		&.active {
 			outline: 2px solid #ff7aa2;
 			outline-offset: 1px;
-			background: inherit;
-			color: inherit;
 		}
 	}
 </style>
