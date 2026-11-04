@@ -21,8 +21,7 @@
 	const LINE_HEIGHT = 1.4;
 	const MIN_FONT = 12;
 	const MAX_FONT = 160;
-	const LONG_PRESS_MS = 420;
-	const MOVE_SLOP = 10;
+	const MOVE_SLOP = 12;
 
 	function lineHeightPx(fontSize = BASE_FONT) {
 		return Math.ceil(fontSize * LINE_HEIGHT);
@@ -61,9 +60,9 @@
 		startClientY: number;
 		ox: number;
 		oy: number;
-		timer: ReturnType<typeof setTimeout>;
 		dragging: boolean;
 		target: HTMLElement;
+		wasEditing: boolean;
 	} | null = null;
 
 	function resize() {
@@ -155,7 +154,6 @@
 
 	function clearPress() {
 		if (!press) return;
-		clearTimeout(press.timer);
 		press = null;
 		movingId = null;
 	}
@@ -168,67 +166,66 @@
 		item.y = clamp(clientY - r.top - oy, 0, board.clientHeight - h);
 	}
 
+	function startDragging() {
+		if (!press || press.dragging) return;
+		press.dragging = true;
+		interacting = true;
+		movingId = press.item.id;
+		window.getSelection()?.removeAllRanges();
+		// Blur so the caret/keyboard don't fight the drag
+		if (press.wasEditing) editor?.blur();
+	}
+
 	function beginPress(e: PointerEvent, item: Item) {
 		e.stopPropagation();
 		if (press) clearPress();
 		ensureSize(item);
 		const p = pos(e);
-		const pointerId = e.pointerId;
 		const target = e.currentTarget as HTMLElement;
+		const wasEditing = editingId === item.id;
+		// Idle: block scroll/selection so a slide can drag. Editing: allow caret on tap.
+		if (!wasEditing) e.preventDefault();
+		try {
+			target.setPointerCapture(e.pointerId);
+		} catch {
+			/* pointer already gone */
+		}
 		press = {
 			item,
-			pointerId,
+			pointerId: e.pointerId,
 			startClientX: e.clientX,
 			startClientY: e.clientY,
 			ox: p.x - item.x,
 			oy: p.y - item.y,
 			dragging: false,
 			target,
-			timer: setTimeout(() => {
-				if (!press || press.pointerId !== pointerId) return;
-				press.dragging = true;
-				interacting = true;
-				movingId = item.id;
-				try {
-					target.setPointerCapture(pointerId);
-				} catch {
-					/* already released */
-				}
-				if (editingId === item.id) editor?.blur();
-				window.getSelection()?.removeAllRanges();
-			}, LONG_PRESS_MS)
+			wasEditing
 		};
 	}
 
 	function onPressMove(e: PointerEvent) {
 		if (!press || press.pointerId !== e.pointerId) return;
-		if (press.dragging) {
-			e.preventDefault();
-			moveItemTo(press.item, e.clientX, e.clientY, press.ox, press.oy);
-			return;
+		if (!press.dragging) {
+			const dx = e.clientX - press.startClientX;
+			const dy = e.clientY - press.startClientY;
+			if (dx * dx + dy * dy <= MOVE_SLOP * MOVE_SLOP) return;
+			startDragging();
 		}
-		const dx = e.clientX - press.startClientX;
-		const dy = e.clientY - press.startClientY;
-		if (dx * dx + dy * dy > MOVE_SLOP * MOVE_SLOP) {
-			clearTimeout(press.timer);
-			// Finger moved before long-press — cancel; don't start a drag
-			press = null;
-		}
+		e.preventDefault();
+		moveItemTo(press.item, e.clientX, e.clientY, press.ox, press.oy);
 	}
 
 	function endPress(e: PointerEvent) {
 		if (!press || press.pointerId !== e.pointerId) return;
-		const { item, dragging } = press;
-		clearTimeout(press.timer);
+		const { item, dragging, wasEditing } = press;
 		press = null;
 		movingId = null;
 		if (dragging) {
 			interacting = false;
-			if (editingId === item.id) editor?.focus({ preventScroll: true });
 			return;
 		}
-		// Short tap → edit
-		if (editingId !== item.id) {
+		// Short tap on an idle box → edit
+		if (!wasEditing) {
 			commitText();
 			startEditing(item.id);
 		}
@@ -367,7 +364,7 @@
 	}
 
 	function onEditorPointerDown(e: PointerEvent, item: Item) {
-		// Allow caret placement on short taps; long-press still moves the box
+		// Tap places the caret; sliding past the slop drags the box
 		beginPress(e, item);
 	}
 </script>
@@ -667,6 +664,7 @@
 
 		&.moving {
 			opacity: 0.92;
+			cursor: grabbing;
 		}
 
 		&.editing {
