@@ -5,7 +5,8 @@
 	import {
 		addSticker,
 		blobToDataUrl,
-		loadStickers
+		loadStickers,
+		removeSticker
 	} from '#lib/stickers/library.ts';
 	import { bitmapToPngBlob, loadImage } from '#lib/stickers/loadImage.ts';
 
@@ -109,6 +110,25 @@
 		} catch (err) {
 			console.error(err);
 			error = 'Couldn’t add that sticker.';
+			haptic('error');
+		}
+	}
+
+	async function remove(sticker: SheetSticker, e: MouseEvent) {
+		e.stopPropagation();
+		if (busy) return;
+		haptic('medium');
+		error = null;
+		const prev = stickers;
+		stickers = stickers.filter((s) => s.id !== sticker.id);
+		try {
+			await removeSticker(sticker.id);
+			URL.revokeObjectURL(sticker.src);
+			haptic('success');
+		} catch (err) {
+			console.error(err);
+			stickers = prev;
+			error = 'Couldn’t delete that sticker.';
 			haptic('error');
 		}
 	}
@@ -286,14 +306,32 @@
 				{/if}
 
 				{#each stickers as sticker (sticker.id)}
-					<button
-						type="button"
-						class="cell sticker"
-						aria-label="Add sticker"
-						onclick={() => pick(sticker)}
-					>
-						<img src={sticker.src} alt="" draggable="false" />
-					</button>
+					<div class="cell sticker">
+						<button
+							type="button"
+							class="pick"
+							aria-label="Add sticker"
+							onclick={() => pick(sticker)}
+						>
+							<img src={sticker.src} alt="" draggable="false" />
+						</button>
+						<button
+							type="button"
+							class="remove"
+							aria-label="Delete sticker"
+							disabled={busy}
+							onclick={(e) => remove(sticker, e)}
+						>
+							<svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+								<path
+									stroke="currentColor"
+									stroke-width="2.5"
+									stroke-linecap="round"
+									d="M7 7l10 10M17 7L7 17"
+								/>
+							</svg>
+						</button>
+					</div>
 				{/each}
 			</div>
 
@@ -562,6 +600,7 @@
 	}
 
 	.sticker {
+		position: relative;
 		background:
 			linear-gradient(45deg, oklch(0.9 0.01 82) 25%, transparent 25%) 0 0 / 8px 8px,
 			linear-gradient(-45deg, oklch(0.9 0.01 82) 25%, transparent 25%) 0 4px / 8px 8px,
@@ -569,11 +608,65 @@
 			linear-gradient(-45deg, transparent 75%, oklch(0.9 0.01 82) 75%) -4px 0 / 8px 8px,
 			var(--surface);
 
+		&:active {
+			transform: none;
+		}
+	}
+
+	.pick {
+		display: block;
+		width: 100%;
+		height: 100%;
+		padding: 0;
+		border: none;
+		border-radius: inherit;
+		background: transparent;
+		box-shadow: none;
+		transition: transform var(--duration-press) ease-out;
+
+		&:active {
+			transform: scale(0.96);
+		}
+
 		img {
 			width: 100%;
 			height: 100%;
 			object-fit: contain;
 			pointer-events: none;
+		}
+	}
+
+	.remove {
+		position: absolute;
+		top: 0.2rem;
+		right: 0.2rem;
+		z-index: 1;
+		display: grid;
+		place-items: center;
+		width: 1.45rem;
+		height: 1.45rem;
+		padding: 0;
+		border: none;
+		border-radius: 999px;
+		background: oklch(0.22 0.02 52 / 0.72);
+		box-shadow: 0 1px 3px oklch(0.2 0.02 52 / 0.28);
+		color: var(--surface);
+		transition:
+			background-color var(--duration-press) ease,
+			transform var(--duration-press) ease-out;
+
+		&:active:not(:disabled) {
+			transform: scale(0.92);
+			background: oklch(0.18 0.02 52 / 0.85);
+		}
+
+		&:disabled {
+			opacity: 0.45;
+		}
+
+		svg {
+			width: 0.72rem;
+			height: 0.72rem;
 		}
 	}
 
@@ -590,6 +683,8 @@
 		.backdrop,
 		.popover,
 		.cell,
+		.pick,
+		.remove,
 		.mode-btn {
 			transition: none;
 		}
