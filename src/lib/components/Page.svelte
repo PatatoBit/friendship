@@ -1,14 +1,14 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import ColorPicker from './ColorPicker.svelte';
 
 	type Tool = 'draw' | 'text' | 'sticker';
 	type Item = { id: number; kind: 'text' | 'sticker'; x: number; y: number; value: string };
 
 	const stickers = ['💖', '🌸', '⭐', '🐻', '🍓', '🌈', '✨', '🎀'];
-	const colors = ['#3a2e2a', '#ff7aa2', '#6bb5ff', '#7bd389', '#ffc94d'];
 
 	let tool = $state<Tool>('draw');
-	let color = $state(colors[0]);
+	let color = $state('#3a2e2a');
 	let sticker = $state(stickers[0]);
 	let items = $state<Item[]>([]);
 	let canvas: HTMLCanvasElement;
@@ -77,50 +77,59 @@
 	}
 </script>
 
-<div class="toolbar">
-	{#each ['draw', 'text', 'sticker'] as t}
-		<button class:active={tool === t} onclick={() => (tool = t as Tool)}>{t}</button>
-	{/each}
-	{#if tool === 'draw' || tool === 'text'}
-		{#each colors as c}
-			<button class="swatch" class:active={color === c} style:background={c} aria-label={c} onclick={() => (color = c)}></button>
+<div class="page">
+	<div class="board" bind:this={board}>
+		<canvas bind:this={canvas} onpointerdown={down} onpointermove={move} onpointerup={() => (drawing = false)}></canvas>
+		{#each items as item (item.id)}
+			<div
+				class="item {item.kind}"
+				style:left="{item.x}px"
+				style:top="{item.y}px"
+				style:color={color}
+				onpointerdown={(e) => itemDown(e, item)}
+				onpointermove={itemMove}
+				onpointerup={() => (dragging = null)}
+				role="presentation"
+			>{item.value}</div>
 		{/each}
-	{:else}
-		{#each stickers as s}
-			<button class:active={sticker === s} onclick={() => (sticker = s)}>{s}</button>
-		{/each}
-	{/if}
-</div>
+	</div>
 
-<div class="board" bind:this={board}>
-	<canvas bind:this={canvas} onpointerdown={down} onpointermove={move} onpointerup={() => (drawing = false)}></canvas>
-	{#each items as item (item.id)}
-		<div
-			class="item {item.kind}"
-			style:left="{item.x}px"
-			style:top="{item.y}px"
-			style:color={color}
-			onpointerdown={(e) => itemDown(e, item)}
-			onpointermove={itemMove}
-			onpointerup={() => (dragging = null)}
-			role="presentation"
-		>{item.value}</div>
-	{/each}
+	<div class="toolbar">
+		{#each ['draw', 'text', 'sticker'] as t}
+			<button class:active={tool === t} onclick={() => (tool = t as Tool)}>{t}</button>
+		{/each}
+		{#if tool === 'draw' || tool === 'text'}
+			<ColorPicker bind:color />
+		{:else}
+			{#each stickers as s}
+				<button class:active={sticker === s} onclick={() => (sticker = s)}>{s}</button>
+			{/each}
+		{/if}
+	</div>
 </div>
 
 <style lang="scss">
+	.page {
+		display: flex;
+		flex-direction: column;
+		height: 100dvh;
+		padding-top: env(safe-area-inset-top);
+	}
 	.toolbar {
 		display: flex;
+		flex-shrink: 0;
+		align-items: center;
 		gap: 0.5rem;
 		padding: 0.75rem;
-		padding-top: max(0.75rem, env(safe-area-inset-top));
+		padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
 		overflow-x: auto;
-		.swatch { width: 2.2rem; height: 2.2rem; padding: 0; &.active { outline: 3px solid white; outline-offset: -6px; } }
+		overflow-y: visible;
 	}
 	.board {
 		position: relative;
-		margin: 0 0.75rem 0.75rem;
-		height: calc(100dvh - 5rem);
+		flex: 1;
+		min-height: 0;
+		margin: 0.75rem 0.75rem 0;
 		background: white;
 		border-radius: 1rem;
 		box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);

@@ -1,0 +1,9 @@
+{
+	"name": "friendship",
+	"account_id": "3489c6ed057a211606b7dd5fc64edea2",
+	"main": ".svelte-kit/cloudflare/_worker.js",
+	"compatibility_date": "2026-11-01",
+	"compatibility_flags": ["nodejs_compat"],
+	"assets": { "binding": "ASSETS", "directory": ".svelte-kit/cloudflare" },
+	"routes": [{ "pattern": "friendship.chayapat.me", "custom_domain": true }]
+}
