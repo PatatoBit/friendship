@@ -718,6 +718,13 @@
 		return false;
 	}
 
+	function onBoardPointerDown(e: PointerEvent) {
+		// Select mode lets the canvas pass through; empty board taps clear selection
+		if (tool !== 'select') return;
+		if (e.target !== board) return;
+		deselect();
+	}
+
 	function strokeTo(x: number, y: number) {
 		const mx = (drawX + x) / 2;
 		const my = (drawY + y) / 2;
@@ -953,11 +960,12 @@
 		class:lifted={keyboardOffset > 0}
 		bind:this={board}
 		style:transform={keyboardOffset > 0 ? `translateY(${-keyboardOffset}px)` : undefined}
+		onpointerdown={onBoardPointerDown}
 	>
 		<canvas
 			bind:this={canvas}
 			class:eraser={tool === 'draw' && drawMode === 'eraser'}
-			style:pointer-events={ready ? 'auto' : 'none'}
+			style:pointer-events={ready && tool !== 'select' ? 'auto' : 'none'}
 			onpointerdown={down}
 			onpointermove={move}
 			onpointerup={up}
@@ -1522,6 +1530,7 @@
 	canvas {
 		position: absolute;
 		inset: 0;
+		z-index: 2;
 		width: 100%;
 		height: 100%;
 
@@ -1543,6 +1552,7 @@
 	.sticker-item {
 		--rot: 0deg;
 		position: absolute;
+		z-index: 1;
 		box-sizing: border-box;
 		touch-action: none;
 		user-select: none;
@@ -1585,6 +1595,7 @@
 	.text-box {
 		--rot: 0deg;
 		position: absolute;
+		z-index: 3;
 		box-sizing: border-box;
 		padding: 0;
 		border: 0;
