@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { haptic } from '#lib/haptics.ts';
+
 	let {
 		color = $bindable('#3a2e2a'),
 		presets = ['#3a2e2a', '#ff7aa2', '#6bb5ff', '#7bd389', '#ffc94d', '#ffffff', '#c084fc', '#fb7185']
@@ -86,6 +88,7 @@
 	}
 
 	function selectPreset(c: string) {
+		const changed = color.toLowerCase() !== c.toLowerCase();
 		color = c;
 		const hsv = hexToHsv(c);
 		if (hsv) {
@@ -93,9 +96,11 @@
 			sat = hsv.s;
 			val = hsv.v;
 		}
+		if (changed) haptic('selection');
 	}
 
 	function show() {
+		haptic('medium');
 		if (rendered) {
 			open = true;
 			return;
@@ -114,6 +119,7 @@
 			return;
 		}
 		open = false;
+		haptic('light');
 		if (typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches) {
 			rendered = false;
 		}

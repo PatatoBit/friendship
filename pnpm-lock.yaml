@@ -11,6 +11,9 @@ importers:
       '@supabase/supabase-js':
         specifier: ^2.118.0
         version: 2.118.0
+      web-haptics:
+        specifier: ^0.0.6
+        version: 0.0.6(svelte@5.57.3)
     devDependencies:
       '@sveltejs/adapter-cloudflare':
         specifier: ^8.0.2
@@ -1219,6 +1222,23 @@ packages:
       vite:
         optional: true
 
+  web-haptics@0.0.6:
+    resolution: {integrity: sha512-eCzcf1LDi20+Fr0x9V3OkX92k0gxEQXaHajmhXHitsnk6SxPeshv8TBtBRqxyst8HI1uf2FyFVE7QS3jo1gkrw==}
+    peerDependencies:
+      react: '>=18'
+      react-dom: '>=18'
+      svelte: '>=4'
+      vue: '>=3'
+    peerDependenciesMeta:
+      react:
+        optional: true
+      react-dom:
+        optional: true
+      svelte:
+        optional: true
+      vue:
+        optional: true
+
   workerd@1.20261102.1:
     resolution: {integrity: sha512-5A+/vm0M5oc98pB3aR+DZ5cIOvRMhVWVS9tg+CrjUap7PIo8tqAnvNdvuiHBIE47/wkxtNM3jToAaU38dBsZTw==}
     engines: {node: '>=16'}
@@ -2145,6 +2165,10 @@ snapshots:
   vitefu@1.1.3(vite@8.3.5(esbuild@0.28.2)(sass-embedded@1.107.1)(sass@1.107.1)):
     optionalDependencies:
       vite: 8.3.5(esbuild@0.28.2)(sass-embedded@1.107.1)(sass@1.107.1)
+
+  web-haptics@0.0.6(svelte@5.57.3):
+    optionalDependencies:
+      svelte: 5.57.3
 
   workerd@1.20261102.1:
     optionalDependencies:

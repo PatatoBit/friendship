@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
+	import { haptic } from '#lib/haptics.ts';
 	import ColorPicker from './ColorPicker.svelte';
+	import SizePicker from './SizePicker.svelte';
 
 	type Tool = 'draw' | 'text';
 	type DrawMode = 'pencil' | 'eraser';
@@ -22,6 +24,7 @@
 	const MIN_FONT = 12;
 	const MAX_FONT = 160;
 	const MOVE_SLOP = 12;
+	const DEFAULT_BRUSH = 4;
 
 	function lineHeightPx(fontSize = BASE_FONT) {
 		return Math.ceil(fontSize * LINE_HEIGHT);
@@ -32,6 +35,7 @@
 	let tool = $state<Tool>('draw');
 	let drawMode = $state<DrawMode>('pencil');
 	let color = $state('#3a2e2a');
+	let brushSize = $state(DEFAULT_BRUSH);
 	let items = $state<Item[]>([]);
 	let editingId = $state<number | null>(null);
 	let canvas: HTMLCanvasElement;
@@ -222,23 +226,29 @@
 		movingId = null;
 		if (dragging) {
 			interacting = false;
+			haptic('medium');
 			return;
 		}
 		// Short tap on an idle box → edit
 		if (!wasEditing) {
 			commitText();
 			startEditing(item.id);
+			haptic('light');
 		}
 	}
 
 	function selectDraw(mode: DrawMode = 'pencil') {
+		const changed = tool !== 'draw' || drawMode !== mode;
 		tool = 'draw';
 		drawMode = mode;
+		if (changed) haptic('selection');
 	}
 
 	function selectText() {
+		const changed = tool !== 'text';
 		tool = 'text';
 		drawMode = 'pencil';
+		if (changed) haptic('selection');
 	}
 
 	function down(e: PointerEvent) {
@@ -247,8 +257,9 @@
 			commitText();
 			drawing = true;
 			canvas.setPointerCapture(e.pointerId);
-			const penWidth = e.pointerType === 'pen' ? 2 + e.pressure * 6 : 4;
-			ctx.lineWidth = drawMode === 'eraser' ? Math.max(16, penWidth * 3) : penWidth;
+			const pressure = e.pointerType === 'pen' ? 0.55 + e.pressure * 0.9 : 1;
+			const penWidth = brushSize * pressure;
+			ctx.lineWidth = drawMode === 'eraser' ? Math.max(brushSize * 3, penWidth * 3) : penWidth;
 			ctx.strokeStyle = color;
 			ctx.globalCompositeOperation = drawMode === 'eraser' ? 'destination-out' : 'source-over';
 			ctx.beginPath();
@@ -280,6 +291,7 @@
 					...size
 				}
 			];
+			haptic('light');
 			startEditing(id);
 		}
 	}
@@ -520,7 +532,10 @@
 				<path fill="currentColor" d="M5 4v3h5.5v12h3V7H19V4H5Z" />
 			</svg>
 		</button>
-		<div class="color-slot">
+		<div class="end-tools">
+			{#if tool === 'draw'}
+				<SizePicker bind:size={brushSize} />
+			{/if}
 			<ColorPicker bind:color />
 		</div>
 	</div>
@@ -588,7 +603,10 @@
 			margin-inline-start: 0.1rem;
 		}
 	}
-	.color-slot {
+	.end-tools {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
 		margin-left: auto;
 	}
 	.tool {
