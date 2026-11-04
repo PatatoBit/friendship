@@ -212,6 +212,8 @@
 		if (!canUndo) return;
 		const entry = history[history.length - 1];
 		history = history.slice(0, -1);
+		drawing = false;
+		eraserCursor = null;
 		commitText();
 		clearPress();
 		boxResize = null;
@@ -406,6 +408,9 @@
 	}
 
 	async function startEditing(id: number) {
+		const item = items.find((i) => i.id === id);
+		// Snapshot before typing so edits to existing text can be undone
+		if (item && isText(item) && item.value.trim()) pushHistory();
 		selectedId = id;
 		editingId = id;
 		await tick();
