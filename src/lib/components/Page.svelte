@@ -66,6 +66,8 @@
 	let drawing = false;
 	let drawX = 0;
 	let drawY = 0;
+	/** Live eraser preview under the pointer (CSS px diameter matches erase width) */
+	let eraserCursor = $state<{ x: number; y: number } | null>(null);
 	let interacting = false;
 	let movingId = $state<number | null>(null);
 	let trashEl: HTMLDivElement | undefined = $state();
@@ -107,6 +109,10 @@
 	let ready = $state(false);
 	/** Pixels to lift the board so the active text stays above the soft keyboard */
 	let keyboardOffset = $state(0);
+	const MAX_HISTORY = 40;
+	type HistoryEntry = { items: Item[]; drawing: HTMLCanvasElement };
+	let history = $state<HistoryEntry[]>([]);
+	let canUndo = $derived(ready && history.length > 0);
 
 	function resize() {
 		const r = board.getBoundingClientRect();
@@ -176,6 +182,46 @@
 			saveTimer = null;
 			void persistNow();
 		}, 280);
+	}
+
+	function cloneItems(list: Item[]): Item[] {
+		return list.map((item) => ({ ...item }));
+	}
+
+	function pushHistory() {
+		if (!ready || !canvas) return;
+		const drawing = document.createElement('canvas');
+		drawing.width = canvas.width;
+		drawing.height = canvas.height;
+		drawing.getContext('2d')!.drawImage(canvas, 0, 0);
+		history = [
+			...history.slice(-(MAX_HISTORY - 1)),
+			{ items: cloneItems(items), drawing }
+		];
+	}
+
+	function restoreCanvasFrom(source: HTMLCanvasElement) {
+		if (!ctx || !board) return;
+		const r = board.getBoundingClientRect();
+		ctx.globalCompositeOperation = 'source-over';
+		ctx.clearRect(0, 0, r.width, r.height);
+		ctx.drawImage(source, 0, 0, r.width, r.height);
+	}
+
+	function undoPage() {
+		if (!canUndo) return;
+		const entry = history[history.length - 1];
+		history = history.slice(0, -1);
+		commitText();
+		clearPress();
+		boxResize = null;
+		boxRotate = null;
+		editingId = null;
+		selectedId = null;
+		items = cloneItems(entry.items);
+		restoreCanvasFrom(entry.drawing);
+		haptic('selection');
+		scheduleSave();
 	}
 
 	async function restoreDrawing(blob: Blob) {
@@ -349,6 +395,7 @@
 			const x = clamp((board.clientWidth - w) / 2, 0, Math.max(0, board.clientWidth - w));
 			const y = clamp((board.clientHeight - h) / 2, 0, Math.max(0, board.clientHeight - h));
 			const id = Date.now();
+			pushHistory();
 			items = [...items, { id, kind: 'sticker', x, y, w, h, src }];
 			selectedId = id;
 			haptic('light');
@@ -452,6 +499,7 @@
 		boxRotate = null;
 		editingId = null;
 		selectedId = null;
+		pushHistory();
 		items = [];
 		if (ctx && board) {
 			const r = board.getBoundingClientRect();
@@ -498,6 +546,7 @@
 		press.dragging = true;
 		interacting = true;
 		movingId = press.item.id;
+		pushHistory();
 		resetTrash();
 		window.getSelection()?.removeAllRanges();
 		// Blur so the caret/keyboard don't fight the drag
@@ -595,10 +644,31 @@
 		}
 	}
 
+	function eraserDiameter(pressure = 1) {
+		const penWidth = brushSize * pressure;
+		return Math.max(brushSize * 3, penWidth * 3);
+	}
+
+	const eraserPreviewSize = $derived(eraserDiameter());
+
+	function setEraserCursor(e: PointerEvent) {
+		if (tool !== 'draw' || drawMode !== 'eraser') {
+			eraserCursor = null;
+			return;
+		}
+		const p = pos(e);
+		eraserCursor = { x: p.x, y: p.y };
+	}
+
+	function clearEraserCursor() {
+		if (!drawing) eraserCursor = null;
+	}
+
 	function selectDraw(mode: DrawMode = 'pencil') {
 		const changed = tool !== 'draw' || drawMode !== mode;
 		tool = 'draw';
 		drawMode = mode;
+		if (mode !== 'eraser') eraserCursor = null;
 		deselect();
 		if (changed) haptic('selection');
 	}
@@ -607,6 +677,7 @@
 		const changed = tool !== 'text';
 		tool = 'text';
 		drawMode = 'pencil';
+		eraserCursor = null;
 		deselect();
 		if (changed) haptic('selection');
 	}
@@ -624,15 +695,17 @@
 		deselect();
 		if (tool === 'draw') {
 			commitText();
+			pushHistory();
 			drawing = true;
 			canvas.setPointerCapture(e.pointerId);
 			const pressure = e.pointerType === 'pen' ? 0.55 + e.pressure * 0.9 : 1;
 			const penWidth = brushSize * pressure;
-			ctx.lineWidth = drawMode === 'eraser' ? Math.max(brushSize * 3, penWidth * 3) : penWidth;
+			ctx.lineWidth = drawMode === 'eraser' ? eraserDiameter(pressure) : penWidth;
 			ctx.strokeStyle = color;
 			ctx.globalCompositeOperation = drawMode === 'eraser' ? 'destination-out' : 'source-over';
 			drawX = p.x;
 			drawY = p.y;
+			if (drawMode === 'eraser') eraserCursor = { x: p.x, y: p.y };
 			ctx.beginPath();
 			ctx.moveTo(p.x, p.y);
 			// Dot so a tap still leaves a mark
@@ -652,6 +725,7 @@
 			// Only one empty box at a time — drop blanks, keep boxes that have text
 			const id = Date.now();
 			const size = defaultTextSize(p.x, p.y);
+			pushHistory();
 			items = [
 				...items.filter((i) => !isText(i) || i.value.trim()),
 				{
@@ -671,6 +745,7 @@
 	}
 
 	function move(e: PointerEvent) {
+		if (tool === 'draw' && drawMode === 'eraser') setEraserCursor(e);
 		if (!drawing) return;
 		const coalesced = e.getCoalescedEvents?.() ?? [];
 		const samples = coalesced.length ? coalesced : [e];
@@ -687,6 +762,12 @@
 			const p = pos(e);
 			ctx.lineTo(p.x, p.y);
 			ctx.stroke();
+			if (drawMode === 'eraser') {
+				if (e.pointerType === 'mouse') eraserCursor = { x: p.x, y: p.y };
+				else eraserCursor = null;
+			}
+		} else if (drawMode === 'eraser') {
+			eraserCursor = null;
 		}
 		drawing = false;
 		ctx.globalCompositeOperation = 'source-over';
@@ -700,6 +781,7 @@
 		boxRotate = null;
 		ensureSize(item);
 		interacting = true;
+		pushHistory();
 		boxResize = {
 			item,
 			startX: e.clientX,
@@ -770,6 +852,7 @@
 		boxResize = null;
 		ensureSize(item);
 		interacting = true;
+		pushHistory();
 		boxRotate = {
 			item,
 			startPointerAngle: pointerAngle(item, e.clientX, e.clientY),
@@ -837,21 +920,45 @@
 	>
 		<canvas
 			bind:this={canvas}
+			class:eraser={tool === 'draw' && drawMode === 'eraser'}
 			style:pointer-events={ready ? 'auto' : 'none'}
 			onpointerdown={down}
 			onpointermove={move}
 			onpointerup={up}
 			onpointercancel={up}
+			onpointerenter={setEraserCursor}
+			onpointerleave={clearEraserCursor}
 		></canvas>
-		<button
-			type="button"
-			class="clear-btn"
-			aria-label="Clear page"
-			disabled={!ready}
-			onclick={clearPage}
-		>
-			Clear
-		</button>
+		{#if eraserCursor && tool === 'draw' && drawMode === 'eraser'}
+			<div
+				class="eraser-cursor"
+				style:left="{eraserCursor.x}px"
+				style:top="{eraserCursor.y}px"
+				style:width="{eraserPreviewSize}px"
+				style:height="{eraserPreviewSize}px"
+				aria-hidden="true"
+			></div>
+		{/if}
+		<div class="board-actions">
+			<button
+				type="button"
+				class="board-action"
+				aria-label="Undo"
+				disabled={!canUndo}
+				onclick={undoPage}
+			>
+				Undo
+			</button>
+			<button
+				type="button"
+				class="board-action"
+				aria-label="Clear page"
+				disabled={!ready}
+				onclick={clearPage}
+			>
+				Clear
+			</button>
+		</div>
 		<div
 			bind:this={trashEl}
 			class="trash"
@@ -1259,7 +1366,7 @@
 		.eraser-slot,
 		.resize-handle,
 		.rotate-handle,
-		.clear-btn,
+		.board-action,
 		.trash,
 		.trash-lid,
 		.trash-icon,
@@ -1289,11 +1396,15 @@
 			z-index: 2;
 		}
 	}
-	.clear-btn {
+	.board-actions {
 		position: absolute;
 		top: 0.85rem;
 		right: 0.85rem;
 		z-index: 30;
+		display: flex;
+		gap: 0.4rem;
+	}
+	.board-action {
 		height: 2.4rem;
 		padding: 0 0.95rem;
 		font-size: 0.95rem;
@@ -1374,6 +1485,21 @@
 		inset: 0;
 		width: 100%;
 		height: 100%;
+
+		&.eraser {
+			cursor: none;
+		}
+	}
+	.eraser-cursor {
+		position: absolute;
+		z-index: 4;
+		box-sizing: border-box;
+		border: 1.5px solid oklch(0.3 0.02 52 / 0.55);
+		border-radius: 50%;
+		background: oklch(1 0 0 / 0.45);
+		box-shadow: 0 0 0 1px oklch(1 0 0 / 0.5);
+		transform: translate(-50%, -50%);
+		pointer-events: none;
 	}
 	.sticker-item {
 		--rot: 0deg;
