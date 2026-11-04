@@ -3,6 +3,7 @@
 	import ColorPicker from './ColorPicker.svelte';
 
 	type Tool = 'draw' | 'text';
+	type DrawMode = 'pencil' | 'eraser';
 	type Item = {
 		id: number;
 		kind: 'text';
@@ -14,16 +15,13 @@
 		h?: number;
 	};
 
-	const tools: { id: Tool; label: string }[] = [
-		{ id: 'draw', label: 'Draw' },
-		{ id: 'text', label: 'Text' }
-	];
 	const MIN_W = 96;
 	const MIN_H = 48;
 	const LONG_PRESS_MS = 420;
 	const MOVE_SLOP = 10;
 
 	let tool = $state<Tool>('draw');
+	let drawMode = $state<DrawMode>('pencil');
 	let color = $state('#3a2e2a');
 	let items = $state<Item[]>([]);
 	let editingId = $state<number | null>(null);
@@ -33,6 +31,7 @@
 	let ctx: CanvasRenderingContext2D;
 	let drawing = false;
 	let interacting = false;
+	let movingId = $state<number | null>(null);
 	let boxResize:
 		| { item: Item; startX: number; startY: number; startW: number; startH: number }
 		| null = null;
@@ -45,6 +44,7 @@
 		oy: number;
 		timer: ReturnType<typeof setTimeout>;
 		dragging: boolean;
+		target: HTMLElement;
 	} | null = null;
 
 	function resize() {
@@ -120,6 +120,7 @@
 		if (!press) return;
 		clearTimeout(press.timer);
 		press = null;
+		movingId = null;
 	}
 
 	function moveItemTo(item: Item, clientX: number, clientY: number, ox: number, oy: number) {
@@ -136,6 +137,7 @@
 		ensureSize(item);
 		const p = pos(e);
 		const pointerId = e.pointerId;
+		const target = e.currentTarget as HTMLElement;
 		press = {
 			item,
 			pointerId,
@@ -144,16 +146,21 @@
 			ox: p.x - item.x,
 			oy: p.y - item.y,
 			dragging: false,
+			target,
 			timer: setTimeout(() => {
 				if (!press || press.pointerId !== pointerId) return;
 				press.dragging = true;
 				interacting = true;
+				movingId = item.id;
+				try {
+					target.setPointerCapture(pointerId);
+				} catch {
+					/* already released */
+				}
 				if (editingId === item.id) editor?.blur();
-				// Drop any pending text selection once move starts
 				window.getSelection()?.removeAllRanges();
 			}, LONG_PRESS_MS)
 		};
-		(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
 	}
 
 	function onPressMove(e: PointerEvent) {
@@ -177,6 +184,7 @@
 		const { item, dragging } = press;
 		clearTimeout(press.timer);
 		press = null;
+		movingId = null;
 		if (dragging) {
 			interacting = false;
 			if (editingId === item.id) editor?.focus({ preventScroll: true });
@@ -189,14 +197,26 @@
 		}
 	}
 
+	function selectDraw(mode: DrawMode = 'pencil') {
+		tool = 'draw';
+		drawMode = mode;
+	}
+
+	function selectText() {
+		tool = 'text';
+		drawMode = 'pencil';
+	}
+
 	function down(e: PointerEvent) {
 		const p = pos(e);
 		if (tool === 'draw') {
 			commitText();
 			drawing = true;
 			canvas.setPointerCapture(e.pointerId);
+			const penWidth = e.pointerType === 'pen' ? 2 + e.pressure * 6 : 4;
+			ctx.lineWidth = drawMode === 'eraser' ? Math.max(16, penWidth * 3) : penWidth;
 			ctx.strokeStyle = color;
-			ctx.lineWidth = e.pointerType === 'pen' ? 2 + e.pressure * 6 : 4;
+			ctx.globalCompositeOperation = drawMode === 'eraser' ? 'destination-out' : 'source-over';
 			ctx.beginPath();
 			ctx.moveTo(p.x, p.y);
 		} else {
@@ -213,6 +233,12 @@
 		const p = pos(e);
 		ctx.lineTo(p.x, p.y);
 		ctx.stroke();
+	}
+
+	function up() {
+		if (!drawing) return;
+		drawing = false;
+		ctx.globalCompositeOperation = 'source-over';
 	}
 
 	function beginResize(e: PointerEvent, item: Item) {
@@ -268,17 +294,25 @@
 
 <div class="page">
 	<div class="board" bind:this={board}>
-		<canvas bind:this={canvas} onpointerdown={down} onpointermove={move} onpointerup={() => (drawing = false)}></canvas>
+		<canvas
+			bind:this={canvas}
+			onpointerdown={down}
+			onpointermove={move}
+			onpointerup={up}
+			onpointercancel={up}
+		></canvas>
 		{#each items as item (item.id)}
 			{#if editingId === item.id}
 				<div
 					class="text-box editing"
-					class:moving={press?.dragging && press.item.id === item.id}
+					class:moving={movingId === item.id}
 					style:left="{item.x}px"
 					style:top="{item.y}px"
 					style:width="{item.w}px"
 					style:height="{item.h}px"
 					style:color={item.color ?? color}
+					role="group"
+					aria-label="Text box"
 					onpointerdown={(e) => beginPress(e, item)}
 					onpointermove={onPressMove}
 					onpointerup={endPress}
@@ -292,9 +326,11 @@
 						enterkeyhint="done"
 						aria-label="Page text"
 						autocomplete="off"
-						autocorrect="on"
 						autocapitalize="sentences"
 						onpointerdown={(e) => onEditorPointerDown(e, item)}
+						onpointermove={onPressMove}
+						onpointerup={endPress}
+						onpointercancel={endPress}
 						onblur={() => onEditorBlur(item.id)}
 						onkeydown={onEditorKeydown}
 					></textarea>
@@ -312,7 +348,7 @@
 				<div
 					class="text-box"
 					class:empty={!item.value.trim()}
-					class:moving={press?.dragging && press.item.id === item.id}
+					class:moving={movingId === item.id}
 					style:left="{item.x}px"
 					style:top="{item.y}px"
 					style:width={item.w ? `${item.w}px` : undefined}
@@ -331,38 +367,79 @@
 	</div>
 
 	<div class="toolbar">
-		{#each tools as t}
+		<div class="draw-pill" class:open={tool === 'draw'} aria-label="Drawing tools">
 			<button
 				type="button"
 				class="tool"
-				class:active={tool === t.id}
-				aria-label={t.label}
-				onclick={() => (tool = t.id)}
+				class:active={tool === 'draw' && drawMode === 'pencil'}
+				aria-label="Pencil"
+				aria-pressed={tool === 'draw' && drawMode === 'pencil'}
+				onclick={() => selectDraw('pencil')}
 			>
-				{#if t.id === 'draw'}
+				<svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+					<path
+						stroke="currentColor"
+						stroke-width="2"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"
+					/>
+					<path
+						stroke="currentColor"
+						stroke-width="2"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						d="m15 5 4 4"
+					/>
+				</svg>
+			</button>
+			<div class="eraser-slot" class:open={tool === 'draw'}>
+				<button
+					type="button"
+					class="tool"
+					class:active={drawMode === 'eraser'}
+					aria-label="Eraser"
+					aria-pressed={drawMode === 'eraser'}
+					tabindex={tool === 'draw' ? 0 : -1}
+					onclick={() => selectDraw('eraser')}
+				>
 					<svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
 						<path
 							stroke="currentColor"
 							stroke-width="2"
 							stroke-linecap="round"
 							stroke-linejoin="round"
-							d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"
+							d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"
 						/>
 						<path
 							stroke="currentColor"
 							stroke-width="2"
 							stroke-linecap="round"
 							stroke-linejoin="round"
-							d="m15 5 4 4"
+							d="M22 21H7"
+						/>
+						<path
+							stroke="currentColor"
+							stroke-width="2"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							d="m5 11 9 9"
 						/>
 					</svg>
-				{:else}
-					<svg viewBox="0 0 24 24" aria-hidden="true">
-						<path fill="currentColor" d="M5 4v3h5.5v12h3V7H19V4H5Z" />
-					</svg>
-				{/if}
-			</button>
-		{/each}
+				</button>
+			</div>
+		</div>
+		<button
+			type="button"
+			class="tool"
+			class:active={tool === 'text'}
+			aria-label="Text"
+			onclick={selectText}
+		>
+			<svg viewBox="0 0 24 24" aria-hidden="true">
+				<path fill="currentColor" d="M5 4v3h5.5v12h3V7H19V4H5Z" />
+			</svg>
+		</button>
 		<div class="color-slot">
 			<ColorPicker bind:color />
 		</div>
@@ -385,6 +462,66 @@
 		padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
 		overflow: visible;
 	}
+	.draw-pill {
+		--pill-ease: cubic-bezier(0.23, 1, 0.32, 1);
+		display: grid;
+		grid-template-columns: auto 0fr;
+		align-items: center;
+		height: 2.6rem;
+		padding: 0.15rem;
+		border-radius: 999px;
+		background: white;
+		box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+		transition: grid-template-columns 220ms var(--pill-ease);
+
+		&.open {
+			grid-template-columns: auto 1fr;
+		}
+
+		.tool {
+			position: relative;
+			z-index: 1;
+			width: 2.3rem;
+			height: 2.3rem;
+			box-shadow: none;
+			background: transparent;
+			transition:
+				background-color 150ms ease,
+				color 150ms ease,
+				transform 150ms ease;
+
+			&:active {
+				transform: scale(0.94);
+			}
+
+			&.active {
+				background: #ff7aa2;
+				color: white;
+			}
+		}
+	}
+	.eraser-slot {
+		display: grid;
+		min-width: 0;
+		overflow: hidden;
+		opacity: 0;
+		transform: translateX(-0.55rem) scale(0.86);
+		transform-origin: left center;
+		pointer-events: none;
+		transition:
+			opacity 180ms var(--pill-ease),
+			transform 220ms var(--pill-ease);
+
+		&.open {
+			opacity: 1;
+			transform: none;
+			pointer-events: auto;
+		}
+
+		.tool {
+			margin-inline-start: 0.1rem;
+		}
+	}
 	.color-slot {
 		margin-left: auto;
 	}
@@ -397,6 +534,13 @@
 		svg {
 			width: 1.25rem;
 			height: 1.25rem;
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.draw-pill,
+		.draw-pill .tool,
+		.eraser-slot {
+			transition: none;
 		}
 	}
 	.board {
