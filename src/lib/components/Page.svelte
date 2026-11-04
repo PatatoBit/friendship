@@ -31,7 +31,7 @@
 
 	let tool = $state<Tool>('draw');
 	let drawMode = $state<DrawMode>('pencil');
-	let color = $state('#3a2e2a');
+	let color = $state('#2c2622');
 	let items = $state<Item[]>([]);
 	let editingId = $state<number | null>(null);
 	let canvas: HTMLCanvasElement;
@@ -550,8 +550,8 @@
 		height: 2.6rem;
 		padding: 0.15rem;
 		border-radius: 999px;
-		background: white;
-		box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+		background: var(--surface);
+		box-shadow: 0 1px 4px oklch(0.3 0.02 52 / 0.1);
 		transition: grid-template-columns 220ms var(--pill-ease);
 
 		&.open {
@@ -575,8 +575,8 @@
 			}
 
 			&.active {
-				background: #ff7aa2;
-				color: white;
+				background: var(--accent);
+				color: var(--surface);
 			}
 		}
 	}
@@ -628,9 +628,9 @@
 		flex: 1;
 		min-height: 0;
 		margin: 0.75rem 0.75rem 0;
-		background: white;
+		background: var(--surface);
 		border-radius: 1rem;
-		box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+		box-shadow: 0 2px 12px oklch(0.3 0.02 52 / 0.08);
 		overflow: hidden;
 		touch-action: none;
 	}
@@ -659,7 +659,7 @@
 
 		// Ring via box-shadow so it doesn't shift the text
 		&.empty {
-			box-shadow: 0 0 0 2px color-mix(in srgb, #f5c518 45%, transparent);
+			box-shadow: 0 0 0 2px color-mix(in oklch, var(--select) 45%, transparent);
 		}
 
 		&.moving {
@@ -671,7 +671,7 @@
 			overflow: visible;
 			background: transparent;
 			border-radius: 0;
-			box-shadow: 0 0 0 2px #f5c518;
+			box-shadow: 0 0 0 2px var(--select);
 			touch-action: none;
 			user-select: text;
 		}
@@ -708,9 +708,9 @@
 		width: 1.15rem;
 		height: 1.15rem;
 		padding: 0;
-		border: 2px solid #f5c518;
+		border: 2px solid var(--select);
 		border-radius: 2px;
-		background: #fff;
+		background: var(--surface);
 		box-shadow: none;
 		touch-action: none;
 		cursor: nwse-resize;
@@ -721,8 +721,8 @@
 			bottom: 2px;
 			width: 0.45rem;
 			height: 0.45rem;
-			border-right: 2px solid #f5c518;
-			border-bottom: 2px solid #f5c518;
+			border-right: 2px solid var(--select);
+			border-bottom: 2px solid var(--select);
 		}
 	}
 </style>

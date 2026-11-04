@@ -1,7 +1,7 @@
 <script lang="ts">
 	let {
-		color = $bindable('#3a2e2a'),
-		presets = ['#3a2e2a', '#ff7aa2', '#6bb5ff', '#7bd389', '#ffc94d', '#ffffff', '#c084fc', '#fb7185']
+		color = $bindable('#2c2622'),
+		presets = ['#2c2622', '#5c4638', '#8a6550', '#6b6358', '#4a5560', '#556048', '#c4b8a8', '#f7f3eb']
 	}: { color?: string; presets?: string[] } = $props();
 
 	let open = $state(false);
@@ -165,10 +165,10 @@
 		width: 2.4rem;
 		height: 2.4rem;
 		padding: 0;
-		border: 2px solid white;
+		border: 2px solid var(--surface);
 		box-shadow:
-			0 0 0 1.5px rgba(58, 46, 42, 0.25),
-			0 1px 4px rgba(0, 0, 0, 0.12);
+			0 0 0 1.5px oklch(0.3 0.02 52 / 0.25),
+			0 1px 4px oklch(0.3 0.02 52 / 0.1);
 	}
 	.backdrop {
 		position: fixed;
@@ -187,9 +187,9 @@
 		z-index: 21;
 		width: min(16.5rem, calc(100vw - 1.5rem));
 		padding: 0.9rem;
-		background: #fff8ef;
+		background: var(--paper);
 		border-radius: 1.1rem;
-		box-shadow: 0 8px 28px rgba(58, 46, 42, 0.18);
+		box-shadow: 0 8px 28px oklch(0.3 0.02 52 / 0.16);
 		display: flex;
 		flex-direction: column;
 		gap: 0.75rem;
@@ -208,15 +208,15 @@
 			),
 			radial-gradient(circle closest-side, #fff, transparent 70%),
 			conic-gradient(from 0deg, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
-		box-shadow: inset 0 0 0 1px rgba(58, 46, 42, 0.08);
+		box-shadow: inset 0 0 0 1px oklch(0.3 0.02 52 / 0.08);
 	}
 	.thumb {
 		position: absolute;
 		width: 1.15rem;
 		height: 1.15rem;
 		border-radius: 50%;
-		border: 2px solid white;
-		box-shadow: 0 0 0 1px rgba(58, 46, 42, 0.35), 0 1px 4px rgba(0, 0, 0, 0.2);
+		border: 2px solid var(--surface);
+		box-shadow: 0 0 0 1px oklch(0.3 0.02 52 / 0.35), 0 1px 4px oklch(0.3 0.02 52 / 0.2);
 		transform: translate(-50%, -50%);
 		pointer-events: none;
 	}
@@ -225,11 +225,11 @@
 		flex-direction: column;
 		gap: 0.35rem;
 		font-size: 0.75rem;
-		color: #3a2e2a;
+		color: var(--ink);
 		span { opacity: 0.7; }
 		input[type='range'] {
 			width: 100%;
-			accent-color: #ff7aa2;
+			accent-color: var(--accent);
 		}
 	}
 	.presets {
@@ -242,10 +242,10 @@
 		width: 1.85rem;
 		height: 1.85rem;
 		padding: 0;
-		border: 2px solid white;
-		box-shadow: 0 0 0 1px rgba(58, 46, 42, 0.15);
+		border: 2px solid var(--surface);
+		box-shadow: 0 0 0 1px oklch(0.3 0.02 52 / 0.15);
 		&.active {
-			outline: 2px solid #ff7aa2;
+			outline: 2px solid var(--accent);
 			outline-offset: 1px;
 		}
 	}
