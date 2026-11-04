@@ -3,10 +3,11 @@
 	import { haptic } from '#lib/haptics.ts';
 	import ColorPicker from './ColorPicker.svelte';
 	import SizePicker from './SizePicker.svelte';
+	import StickerSheet from './StickerSheet.svelte';
 
 	type Tool = 'draw' | 'text';
 	type DrawMode = 'pencil' | 'eraser';
-	type Item = {
+	type TextItem = {
 		id: number;
 		kind: 'text';
 		x: number;
@@ -17,8 +18,20 @@
 		h?: number;
 		fontSize?: number;
 	};
+	type StickerItem = {
+		id: number;
+		kind: 'sticker';
+		x: number;
+		y: number;
+		src: string;
+		w: number;
+		h: number;
+	};
+	type Item = TextItem | StickerItem;
 
 	const MIN_W = 96;
+	const MIN_STICKER = 48;
+	const DEFAULT_STICKER = 120;
 	const BASE_FONT = 20; // 1.25rem — keeps iOS from zooming on focus
 	const LINE_HEIGHT = 1.4;
 	const MIN_FONT = 12;
@@ -38,6 +51,7 @@
 	let brushSize = $state(DEFAULT_BRUSH);
 	let items = $state<Item[]>([]);
 	let editingId = $state<number | null>(null);
+	let selectedId = $state<number | null>(null);
 	let canvas: HTMLCanvasElement;
 	let board: HTMLDivElement;
 	let editor: HTMLTextAreaElement | undefined = $state();
@@ -118,7 +132,15 @@
 		};
 	}
 
-	function fitEditorToContent(item: Item) {
+	function isText(item: Item): item is TextItem {
+		return item.kind === 'text';
+	}
+
+	function isSticker(item: Item): item is StickerItem {
+		return item.kind === 'sticker';
+	}
+
+	function fitEditorToContent(item: TextItem) {
 		if (!editor || editingId !== item.id) return;
 		const minH = lineHeightPx(fontSizeOf(item));
 		const maxH = Math.max(minH, board.clientHeight - item.y - 8);
@@ -131,6 +153,7 @@
 	}
 
 	function ensureSize(item: Item) {
+		if (isSticker(item)) return;
 		if (item.w == null || item.h == null) {
 			const size = defaultTextSize(item.x, item.y);
 			item.w ??= size.w;
@@ -139,8 +162,26 @@
 		item.fontSize ??= BASE_FONT;
 	}
 
-	function fontSizeOf(item: Item) {
+	function fontSizeOf(item: TextItem) {
 		return item.fontSize ?? BASE_FONT;
+	}
+
+	function placeSticker(src: string) {
+		commitText();
+		const img = new Image();
+		img.onload = () => {
+			const scale = Math.min(1, DEFAULT_STICKER / Math.max(img.naturalWidth, img.naturalHeight));
+			const w = Math.max(MIN_STICKER, Math.round(img.naturalWidth * scale));
+			const h = Math.max(MIN_STICKER, Math.round(img.naturalHeight * scale));
+			const x = clamp((board.clientWidth - w) / 2, 0, Math.max(0, board.clientWidth - w));
+			const y = clamp((board.clientHeight - h) / 2, 0, Math.max(0, board.clientHeight - h));
+			const id = Date.now();
+			items = [...items, { id, kind: 'sticker', x, y, w, h, src }];
+			selectedId = id;
+			haptic('light');
+		};
+		img.onerror = () => haptic('error');
+		img.src = src;
 	}
 
 	async function startEditing(id: number) {
@@ -154,7 +195,7 @@
 		const id = editingId;
 		editingId = null;
 		const item = items.find((i) => i.id === id);
-		if (!item) return;
+		if (!item || !isText(item)) return;
 		item.value = item.value.trimEnd();
 	}
 
@@ -172,8 +213,15 @@
 		item.y = clamp(clientY - r.top - oy, 0, board.clientHeight - h);
 	}
 
+	function canDragPress() {
+		if (!press) return false;
+		const { item, wasEditing } = press;
+		// Stickers / text only move once already selected (or editing)
+		return isSticker(item) ? selectedId === item.id : wasEditing;
+	}
+
 	function startDragging() {
-		if (!press || press.dragging) return;
+		if (!press || press.dragging || !canDragPress()) return;
 		press.dragging = true;
 		interacting = true;
 		movingId = press.item.id;
@@ -216,6 +264,7 @@
 			const dy = e.clientY - press.startClientY;
 			if (dx * dx + dy * dy <= MOVE_SLOP * MOVE_SLOP) return;
 			startDragging();
+			if (!press.dragging) return;
 		}
 		e.preventDefault();
 		moveItemTo(press.item, e.clientX, e.clientY, press.ox, press.oy);
@@ -231,8 +280,15 @@
 			haptic('medium');
 			return;
 		}
+		if (isSticker(item)) {
+			commitText();
+			selectedId = item.id;
+			haptic('light');
+			return;
+		}
 		// Short tap on an idle box → edit
 		if (!wasEditing) {
+			selectedId = null;
 			commitText();
 			startEditing(item.id);
 			haptic('light');
@@ -243,6 +299,7 @@
 		const changed = tool !== 'draw' || drawMode !== mode;
 		tool = 'draw';
 		drawMode = mode;
+		selectedId = null;
 		if (changed) haptic('selection');
 	}
 
@@ -250,6 +307,7 @@
 		const changed = tool !== 'text';
 		tool = 'text';
 		drawMode = 'pencil';
+		selectedId = null;
 		if (changed) haptic('selection');
 	}
 
@@ -263,6 +321,7 @@
 
 	function down(e: PointerEvent) {
 		const p = pos(e);
+		selectedId = null;
 		if (tool === 'draw') {
 			commitText();
 			drawing = true;
@@ -279,7 +338,7 @@
 			// Dot so a tap still leaves a mark
 			ctx.lineTo(p.x, p.y);
 			ctx.stroke();
-		} else {
+		} else if (tool === 'text') {
 			// Tap out while editing = confirm (keep the box). Don't start a new one.
 			if (editingId != null) {
 				commitText();
@@ -294,7 +353,7 @@
 			const id = Date.now();
 			const size = defaultTextSize(p.x, p.y);
 			items = [
-				...items.filter((i) => i.value.trim()),
+				...items.filter((i) => !isText(i) || i.value.trim()),
 				{
 					id,
 					kind: 'text',
@@ -345,30 +404,57 @@
 			startY: e.clientY,
 			startW: item.w ?? MIN_W,
 			startH: item.h ?? MIN_H,
-			startFont: fontSizeOf(item)
+			startFont: isText(item) ? fontSizeOf(item) : BASE_FONT
 		};
 		(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
 	}
 
 	function onResizeMove(e: PointerEvent) {
 		if (!boxResize) return;
+		const { item } = boxResize;
+		if (isSticker(item)) {
+			const aspect = boxResize.startW / Math.max(1, boxResize.startH);
+			const maxW = Math.max(MIN_STICKER, board.clientWidth - item.x - 8);
+			const maxH = Math.max(MIN_STICKER, board.clientHeight - item.y - 8);
+			const dx = e.clientX - boxResize.startX;
+			const dy = e.clientY - boxResize.startY;
+			let w = boxResize.startW + dx;
+			let h = boxResize.startH + dy;
+			// Prefer the axis with larger movement; keep aspect
+			if (Math.abs(dx) * (1 / aspect) >= Math.abs(dy)) {
+				h = w / aspect;
+			} else {
+				w = h * aspect;
+			}
+			w = clamp(w, MIN_STICKER, maxW);
+			h = clamp(w / aspect, MIN_STICKER, maxH);
+			w = h * aspect;
+			if (w > maxW) {
+				w = maxW;
+				h = w / aspect;
+			}
+			item.w = Math.round(w);
+			item.h = Math.round(h);
+			return;
+		}
 		const minH = lineHeightPx(MIN_FONT);
-		const maxW = Math.max(MIN_W, board.clientWidth - boxResize.item.x - 8);
-		const maxH = Math.max(minH, board.clientHeight - boxResize.item.y - 8);
+		const maxW = Math.max(MIN_W, board.clientWidth - item.x - 8);
+		const maxH = Math.max(minH, board.clientHeight - item.y - 8);
 		const w = clamp(boxResize.startW + (e.clientX - boxResize.startX), MIN_W, maxW);
 		const h = clamp(boxResize.startH + (e.clientY - boxResize.startY), minH, maxH);
-		boxResize.item.w = w;
-		boxResize.item.h = h;
+		item.w = w;
+		item.h = h;
 		// Scale type with the box (geometric mean keeps it even when aspect drifts)
 		const scale = Math.sqrt((w / boxResize.startW) * (h / boxResize.startH));
-		boxResize.item.fontSize = clamp(boxResize.startFont * scale, MIN_FONT, MAX_FONT);
+		item.fontSize = clamp(boxResize.startFont * scale, MIN_FONT, MAX_FONT);
 	}
 
 	function endResize() {
 		if (!boxResize) return;
+		const wasText = isText(boxResize.item);
 		boxResize = null;
 		interacting = false;
-		editor?.focus({ preventScroll: true });
+		if (wasText) editor?.focus({ preventScroll: true });
 	}
 
 	function onEditorBlur(id: number) {
@@ -383,7 +469,7 @@
 		});
 	}
 
-	function onEditorKeydown(e: KeyboardEvent, item: Item) {
+	function onEditorKeydown(e: KeyboardEvent, item: TextItem) {
 		if (e.key === 'Escape') {
 			e.preventDefault();
 			commitText();
@@ -395,11 +481,11 @@
 		}
 	}
 
-	function onEditorInput(item: Item) {
+	function onEditorInput(item: TextItem) {
 		fitEditorToContent(item);
 	}
 
-	function onEditorPointerDown(e: PointerEvent, item: Item) {
+	function onEditorPointerDown(e: PointerEvent, item: TextItem) {
 		// Tap places the caret; sliding past the slop drags the box
 		beginPress(e, item);
 	}
@@ -415,7 +501,36 @@
 			onpointercancel={up}
 		></canvas>
 		{#each items as item (item.id)}
-			{#if editingId === item.id}
+			{#if isSticker(item)}
+				<div
+					class="sticker-item"
+					class:selected={selectedId === item.id}
+					class:moving={movingId === item.id}
+					style:left="{item.x}px"
+					style:top="{item.y}px"
+					style:width="{item.w}px"
+					style:height="{item.h}px"
+					role="group"
+					aria-label="Sticker"
+					onpointerdown={(e) => beginPress(e, item)}
+					onpointermove={onPressMove}
+					onpointerup={endPress}
+					onpointercancel={endPress}
+				>
+					<img src={item.src} alt="" draggable="false" />
+					{#if selectedId === item.id}
+						<button
+							type="button"
+							class="resize-handle"
+							aria-label="Resize sticker"
+							onpointerdown={(e) => beginResize(e, item)}
+							onpointermove={onResizeMove}
+							onpointerup={endResize}
+							onpointercancel={endResize}
+						></button>
+					{/if}
+				</div>
+			{:else if editingId === item.id}
 				<div
 					class="text-box editing"
 					class:moving={movingId === item.id}
@@ -556,6 +671,7 @@
 				<path fill="currentColor" d="M5 4v3h5.5v12h3V7H19V4H5Z" />
 			</svg>
 		</button>
+		<StickerSheet onPick={placeSticker} />
 		<div class="end-tools">
 			{#if tool === 'draw'}
 				<SizePicker bind:size={brushSize} />
@@ -687,6 +803,33 @@
 		inset: 0;
 		width: 100%;
 		height: 100%;
+	}
+	.sticker-item {
+		position: absolute;
+		box-sizing: border-box;
+		touch-action: none;
+		user-select: none;
+		-webkit-user-select: none;
+		overflow: visible;
+
+		img {
+			display: block;
+			width: 100%;
+			height: 100%;
+			object-fit: contain;
+			pointer-events: none;
+			-webkit-user-drag: none;
+		}
+
+		&.moving {
+			opacity: 0.92;
+			cursor: grabbing;
+		}
+
+		&.selected {
+			box-shadow: 0 0 0 2px var(--select);
+			border-radius: 0.25rem;
+		}
 	}
 	.text-box {
 		position: absolute;
