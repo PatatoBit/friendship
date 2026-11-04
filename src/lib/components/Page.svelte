@@ -20,6 +20,8 @@
 	];
 	const MIN_W = 96;
 	const MIN_H = 48;
+	const LONG_PRESS_MS = 420;
+	const MOVE_SLOP = 10;
 
 	let tool = $state<Tool>('draw');
 	let color = $state('#3a2e2a');
@@ -30,12 +32,20 @@
 	let editor: HTMLTextAreaElement | undefined = $state();
 	let ctx: CanvasRenderingContext2D;
 	let drawing = false;
-	let dragging: Item | null = null;
 	let interacting = false;
-	let boxDrag: { item: Item; ox: number; oy: number } | null = null;
 	let boxResize:
 		| { item: Item; startX: number; startY: number; startW: number; startH: number }
 		| null = null;
+	let press: {
+		item: Item;
+		pointerId: number;
+		startClientX: number;
+		startClientY: number;
+		ox: number;
+		oy: number;
+		timer: ReturnType<typeof setTimeout>;
+		dragging: boolean;
+	} | null = null;
 
 	function resize() {
 		const r = board.getBoundingClientRect();
@@ -52,7 +62,10 @@
 		ctx = canvas.getContext('2d')!;
 		resize();
 		window.addEventListener('resize', resize);
-		return () => window.removeEventListener('resize', resize);
+		return () => {
+			window.removeEventListener('resize', resize);
+			clearPress();
+		};
 	});
 
 	$effect(() => {
@@ -80,6 +93,14 @@
 		};
 	}
 
+	function ensureSize(item: Item) {
+		if (item.w == null || item.h == null) {
+			const size = defaultTextSize(item.x, item.y);
+			item.w ??= size.w;
+			item.h ??= size.h;
+		}
+	}
+
 	async function startEditing(id: number) {
 		editingId = id;
 		await tick();
@@ -93,7 +114,79 @@
 		const item = items.find((i) => i.id === id);
 		if (!item) return;
 		item.value = item.value.trimEnd();
-		if (!item.value.trim()) items = items.filter((i) => i.id !== id);
+	}
+
+	function clearPress() {
+		if (!press) return;
+		clearTimeout(press.timer);
+		press = null;
+	}
+
+	function moveItemTo(item: Item, clientX: number, clientY: number, ox: number, oy: number) {
+		const r = board.getBoundingClientRect();
+		const w = item.w ?? MIN_W;
+		const h = item.h ?? MIN_H;
+		item.x = clamp(clientX - r.left - ox, 0, board.clientWidth - w);
+		item.y = clamp(clientY - r.top - oy, 0, board.clientHeight - h);
+	}
+
+	function beginPress(e: PointerEvent, item: Item) {
+		e.stopPropagation();
+		if (press) clearPress();
+		ensureSize(item);
+		const p = pos(e);
+		const pointerId = e.pointerId;
+		press = {
+			item,
+			pointerId,
+			startClientX: e.clientX,
+			startClientY: e.clientY,
+			ox: p.x - item.x,
+			oy: p.y - item.y,
+			dragging: false,
+			timer: setTimeout(() => {
+				if (!press || press.pointerId !== pointerId) return;
+				press.dragging = true;
+				interacting = true;
+				if (editingId === item.id) editor?.blur();
+				// Drop any pending text selection once move starts
+				window.getSelection()?.removeAllRanges();
+			}, LONG_PRESS_MS)
+		};
+		(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+	}
+
+	function onPressMove(e: PointerEvent) {
+		if (!press || press.pointerId !== e.pointerId) return;
+		if (press.dragging) {
+			e.preventDefault();
+			moveItemTo(press.item, e.clientX, e.clientY, press.ox, press.oy);
+			return;
+		}
+		const dx = e.clientX - press.startClientX;
+		const dy = e.clientY - press.startClientY;
+		if (dx * dx + dy * dy > MOVE_SLOP * MOVE_SLOP) {
+			clearTimeout(press.timer);
+			// Finger moved before long-press — cancel; don't start a drag
+			press = null;
+		}
+	}
+
+	function endPress(e: PointerEvent) {
+		if (!press || press.pointerId !== e.pointerId) return;
+		const { item, dragging } = press;
+		clearTimeout(press.timer);
+		press = null;
+		if (dragging) {
+			interacting = false;
+			if (editingId === item.id) editor?.focus({ preventScroll: true });
+			return;
+		}
+		// Short tap → edit
+		if (editingId !== item.id) {
+			commitText();
+			startEditing(item.id);
+		}
 	}
 
 	function down(e: PointerEvent) {
@@ -122,58 +215,10 @@
 		ctx.stroke();
 	}
 
-	function itemDown(e: PointerEvent, item: Item) {
-		e.stopPropagation();
-		if (tool === 'text') {
-			commitText();
-			if (item.w == null || item.h == null) {
-				const size = defaultTextSize(item.x, item.y);
-				item.w ??= size.w;
-				item.h ??= size.h;
-			}
-			startEditing(item.id);
-			return;
-		}
-		if (editingId != null) return;
-		dragging = item;
-		(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-	}
-
-	function itemMove(e: PointerEvent) {
-		if (!dragging) return;
-		const p = pos(e);
-		dragging.x = p.x;
-		dragging.y = p.y;
-	}
-
-	function beginBoxDrag(e: PointerEvent, item: Item) {
-		e.stopPropagation();
-		e.preventDefault();
-		interacting = true;
-		const p = pos(e);
-		boxDrag = { item, ox: p.x - item.x, oy: p.y - item.y };
-		(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-	}
-
-	function onBoxDragMove(e: PointerEvent) {
-		if (!boxDrag) return;
-		const p = pos(e);
-		const w = boxDrag.item.w ?? MIN_W;
-		const h = boxDrag.item.h ?? MIN_H;
-		boxDrag.item.x = clamp(p.x - boxDrag.ox, 0, board.clientWidth - w);
-		boxDrag.item.y = clamp(p.y - boxDrag.oy, 0, board.clientHeight - h);
-	}
-
-	function endBoxDrag(e: PointerEvent) {
-		if (!boxDrag) return;
-		boxDrag = null;
-		interacting = false;
-		editor?.focus({ preventScroll: true });
-	}
-
 	function beginResize(e: PointerEvent, item: Item) {
 		e.stopPropagation();
 		e.preventDefault();
+		clearPress();
 		interacting = true;
 		boxResize = {
 			item,
@@ -201,9 +246,9 @@
 	}
 
 	function onEditorBlur(id: number) {
-		// Delay so resize/move handles can set interacting / restore focus first
+		// Delay so resize/move can set interacting / restore focus first
 		requestAnimationFrame(() => {
-			if (interacting || boxDrag || boxResize) return;
+			if (interacting || press?.dragging || boxResize) return;
 			if (editingId === id && document.activeElement !== editor) commitText(id);
 		});
 	}
@@ -214,6 +259,11 @@
 			commitText();
 		}
 	}
+
+	function onEditorPointerDown(e: PointerEvent, item: Item) {
+		// Allow caret placement on short taps; long-press still moves the box
+		beginPress(e, item);
+	}
 </script>
 
 <div class="page">
@@ -223,22 +273,17 @@
 			{#if editingId === item.id}
 				<div
 					class="text-box editing"
+					class:moving={press?.dragging && press.item.id === item.id}
 					style:left="{item.x}px"
 					style:top="{item.y}px"
 					style:width="{item.w}px"
 					style:height="{item.h}px"
 					style:color={item.color ?? color}
-					onpointerdown={(e) => e.stopPropagation()}
+					onpointerdown={(e) => beginPress(e, item)}
+					onpointermove={onPressMove}
+					onpointerup={endPress}
+					onpointercancel={endPress}
 				>
-					<div
-						class="move-bar"
-						aria-label="Move text"
-						role="presentation"
-						onpointerdown={(e) => beginBoxDrag(e, item)}
-						onpointermove={onBoxDragMove}
-						onpointerup={endBoxDrag}
-						onpointercancel={endBoxDrag}
-					></div>
 					<textarea
 						bind:this={editor}
 						class="editor"
@@ -249,6 +294,7 @@
 						autocomplete="off"
 						autocorrect="on"
 						autocapitalize="sentences"
+						onpointerdown={(e) => onEditorPointerDown(e, item)}
 						onblur={() => onEditorBlur(item.id)}
 						onkeydown={onEditorKeydown}
 					></textarea>
@@ -265,14 +311,17 @@
 			{:else}
 				<div
 					class="text-box"
+					class:empty={!item.value.trim()}
+					class:moving={press?.dragging && press.item.id === item.id}
 					style:left="{item.x}px"
 					style:top="{item.y}px"
 					style:width={item.w ? `${item.w}px` : undefined}
 					style:height={item.h ? `${item.h}px` : undefined}
 					style:color={item.color ?? color}
-					onpointerdown={(e) => itemDown(e, item)}
-					onpointermove={itemMove}
-					onpointerup={() => (dragging = null)}
+					onpointerdown={(e) => beginPress(e, item)}
+					onpointermove={onPressMove}
+					onpointerup={endPress}
+					onpointercancel={endPress}
 					role="presentation"
 				>
 					{item.value}
@@ -291,10 +340,20 @@
 				onclick={() => (tool = t.id)}
 			>
 				{#if t.id === 'draw'}
-					<svg viewBox="0 0 24 24" aria-hidden="true">
+					<svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
 						<path
-							fill="currentColor"
-							d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25Zm14.37-8.62 1.83-1.83a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75Z"
+							stroke="currentColor"
+							stroke-width="2"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"
+						/>
+						<path
+							stroke="currentColor"
+							stroke-width="2"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							d="m15 5 4 4"
 						/>
 					</svg>
 				{:else}
@@ -371,41 +430,30 @@
 		touch-action: none;
 		max-width: calc(100% - 0.5rem);
 
+		&.empty {
+			border: 2px solid color-mix(in srgb, #f5c518 45%, transparent);
+		}
+
+		&.moving {
+			opacity: 0.92;
+		}
+
 		&.editing {
-			display: flex;
-			flex-direction: column;
 			overflow: visible;
-			background: color-mix(in srgb, white 88%, currentColor);
-			border: 2px solid color-mix(in srgb, currentColor 55%, #ff7aa2);
-			border-radius: 0.75rem;
-			box-shadow: 0 8px 24px rgba(58, 46, 42, 0.16);
-			touch-action: auto;
+			background: transparent;
+			border: 2px solid #f5c518;
+			border-radius: 0;
+			box-shadow: none;
+			touch-action: none;
 			user-select: text;
 		}
 	}
-	.move-bar {
-		flex: 0 0 1.35rem;
-		margin: 0.2rem 0.35rem 0;
-		border-radius: 999px;
-		background: color-mix(in srgb, currentColor 22%, transparent);
-		touch-action: none;
-		cursor: grab;
-		&::after {
-			content: '';
-			display: block;
-			width: 2rem;
-			height: 0.2rem;
-			margin: 0.55rem auto 0;
-			border-radius: 999px;
-			background: color-mix(in srgb, currentColor 55%, transparent);
-		}
-	}
 	.editor {
-		flex: 1;
+		display: block;
 		width: 100%;
-		min-height: 0;
+		height: 100%;
 		margin: 0;
-		padding: 0.35rem 0.55rem 0.55rem;
+		padding: 0.35rem 0.45rem;
 		border: 0;
 		outline: none;
 		resize: none;
@@ -422,27 +470,30 @@
 		overflow: auto;
 		-webkit-user-select: text;
 		user-select: text;
-		touch-action: manipulation;
+		touch-action: none;
 	}
 	.resize-handle {
 		position: absolute;
-		right: -0.35rem;
-		bottom: -0.35rem;
-		width: 2.5rem;
-		height: 2.5rem;
+		right: -0.4rem;
+		bottom: -0.4rem;
+		width: 1.15rem;
+		height: 1.15rem;
 		padding: 0;
-		border-radius: 50%;
-		background: #ff7aa2;
-		box-shadow: 0 2px 8px rgba(58, 46, 42, 0.25);
+		border: 2px solid #f5c518;
+		border-radius: 2px;
+		background: #fff;
+		box-shadow: none;
 		touch-action: none;
 		cursor: nwse-resize;
 		&::after {
 			content: '';
 			position: absolute;
-			inset: 0.7rem;
-			border-right: 2px solid white;
-			border-bottom: 2px solid white;
-			border-radius: 0 0 2px 0;
+			right: 2px;
+			bottom: 2px;
+			width: 0.45rem;
+			height: 0.45rem;
+			border-right: 2px solid #f5c518;
+			border-bottom: 2px solid #f5c518;
 		}
 	}
 </style>
