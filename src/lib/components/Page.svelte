@@ -693,6 +693,7 @@
 		box-sizing: border-box;
 		padding: 0;
 		border: 0;
+		border-radius: 0.35rem;
 		font-family: 'Sa Ard Pen', system-ui, sans-serif;
 		font-size: 1.25rem; // fallback before inline size is set
 		font-weight: normal;
@@ -718,7 +719,6 @@
 		&.editing {
 			overflow: visible;
 			background: transparent;
-			border-radius: 0;
 			box-shadow: 0 0 0 2px var(--select);
 			touch-action: none;
 			user-select: text;
