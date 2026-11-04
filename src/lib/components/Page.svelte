@@ -18,6 +18,7 @@
 		w?: number;
 		h?: number;
 		fontSize?: number;
+		rotation?: number;
 	};
 	type StickerItem = {
 		id: number;
@@ -27,6 +28,7 @@
 		src: string;
 		w: number;
 		h: number;
+		rotation?: number;
 	};
 	type Item = TextItem | StickerItem;
 
@@ -82,6 +84,13 @@
 				startFont: number;
 		  }
 		| null = null;
+	let boxRotate:
+		| {
+				item: Item;
+				startPointerAngle: number;
+				startRotation: number;
+		  }
+		| null = null;
 	let press: {
 		item: Item;
 		pointerId: number;
@@ -94,7 +103,7 @@
 		wasEditing: boolean;
 	} | null = null;
 	let saveTimer: ReturnType<typeof setTimeout> | null = null;
-	let ready = false;
+	let ready = $state(false);
 
 	function resize() {
 		const r = board.getBoundingClientRect();
@@ -117,7 +126,16 @@
 	function serializedItems(): PersistedItem[] {
 		return items.map((item) =>
 			isSticker(item)
-				? { id: item.id, kind: 'sticker', x: item.x, y: item.y, src: item.src, w: item.w, h: item.h }
+				? {
+						id: item.id,
+						kind: 'sticker',
+						x: item.x,
+						y: item.y,
+						src: item.src,
+						w: item.w,
+						h: item.h,
+						rotation: item.rotation
+					}
 				: {
 						id: item.id,
 						kind: 'text',
@@ -127,7 +145,8 @@
 						color: item.color,
 						w: item.w,
 						h: item.h,
-						fontSize: item.fontSize
+						fontSize: item.fontSize,
+						rotation: item.rotation
 					}
 		);
 	}
@@ -266,6 +285,29 @@
 		return item.fontSize ?? BASE_FONT;
 	}
 
+	function rotationOf(item: Item) {
+		return item.rotation ?? 0;
+	}
+
+	function itemCenter(item: Item) {
+		const w = item.w ?? MIN_W;
+		const h = item.h ?? MIN_H;
+		return { cx: item.x + w / 2, cy: item.y + h / 2 };
+	}
+
+	function pointerAngle(item: Item, clientX: number, clientY: number) {
+		const r = board.getBoundingClientRect();
+		const { cx, cy } = itemCenter(item);
+		return (Math.atan2(clientY - r.top - cy, clientX - r.left - cx) * 180) / Math.PI;
+	}
+
+	function localDelta(dx: number, dy: number, rotation: number) {
+		const rad = (-rotation * Math.PI) / 180;
+		const cos = Math.cos(rad);
+		const sin = Math.sin(rad);
+		return { x: dx * cos - dy * sin, y: dx * sin + dy * cos };
+	}
+
 	function placeSticker(src: string) {
 		commitText();
 		const img = new Image();
@@ -365,6 +407,8 @@
 	function beginPress(e: PointerEvent, item: Item) {
 		e.stopPropagation();
 		if (press) clearPress();
+		boxResize = null;
+		boxRotate = null;
 		ensureSize(item);
 		const p = pos(e);
 		const target = e.currentTarget as HTMLElement;
@@ -538,6 +582,7 @@
 		e.stopPropagation();
 		e.preventDefault();
 		clearPress();
+		boxRotate = null;
 		ensureSize(item);
 		interacting = true;
 		boxResize = {
@@ -554,12 +599,15 @@
 	function onResizeMove(e: PointerEvent) {
 		if (!boxResize) return;
 		const { item } = boxResize;
+		const { x: dx, y: dy } = localDelta(
+			e.clientX - boxResize.startX,
+			e.clientY - boxResize.startY,
+			rotationOf(item)
+		);
 		if (isSticker(item)) {
 			const aspect = boxResize.startW / Math.max(1, boxResize.startH);
 			const maxW = Math.max(MIN_STICKER, board.clientWidth - item.x - 8);
 			const maxH = Math.max(MIN_STICKER, board.clientHeight - item.y - 8);
-			const dx = e.clientX - boxResize.startX;
-			const dy = e.clientY - boxResize.startY;
 			let w = boxResize.startW + dx;
 			let h = boxResize.startH + dy;
 			// Prefer the axis with larger movement; keep aspect
@@ -582,8 +630,8 @@
 		const minH = lineHeightPx(MIN_FONT);
 		const maxW = Math.max(MIN_W, board.clientWidth - item.x - 8);
 		const maxH = Math.max(minH, board.clientHeight - item.y - 8);
-		const w = clamp(boxResize.startW + (e.clientX - boxResize.startX), MIN_W, maxW);
-		const h = clamp(boxResize.startH + (e.clientY - boxResize.startY), minH, maxH);
+		const w = clamp(boxResize.startW + dx, MIN_W, maxW);
+		const h = clamp(boxResize.startH + dy, minH, maxH);
 		item.w = w;
 		item.h = h;
 		// Scale type with the box (geometric mean keeps it even when aspect drifts)
@@ -600,10 +648,41 @@
 		if (wasText) editor?.focus({ preventScroll: true });
 	}
 
+	function beginRotate(e: PointerEvent, item: Item) {
+		e.stopPropagation();
+		e.preventDefault();
+		clearPress();
+		boxResize = null;
+		ensureSize(item);
+		interacting = true;
+		boxRotate = {
+			item,
+			startPointerAngle: pointerAngle(item, e.clientX, e.clientY),
+			startRotation: rotationOf(item)
+		};
+		(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+	}
+
+	function onRotateMove(e: PointerEvent) {
+		if (!boxRotate) return;
+		const { item, startPointerAngle, startRotation } = boxRotate;
+		const delta = pointerAngle(item, e.clientX, e.clientY) - startPointerAngle;
+		item.rotation = ((startRotation + delta) % 360 + 360) % 360;
+	}
+
+	function endRotate() {
+		if (!boxRotate) return;
+		const wasText = isText(boxRotate.item);
+		boxRotate = null;
+		interacting = false;
+		scheduleSave();
+		if (wasText) editor?.focus({ preventScroll: true });
+	}
+
 	function onEditorBlur(id: number) {
-		// Delay so resize/move can set interacting / restore focus first
+		// Delay so resize/move/rotate can set interacting / restore focus first
 		requestAnimationFrame(() => {
-			if (interacting || press?.dragging || boxResize) return;
+			if (interacting || press?.dragging || boxResize || boxRotate) return;
 			if (editingId === id && document.activeElement !== editor) {
 				commitText(id);
 				// The same tap that blurred often lands on the board — don't treat it as "add new"
@@ -686,6 +765,7 @@
 					style:top="{item.y}px"
 					style:width="{item.w}px"
 					style:height="{item.h}px"
+					style:--rot="{rotationOf(item)}deg"
 					role="group"
 					aria-label="Sticker"
 					onpointerdown={(e) => beginPress(e, item)}
@@ -695,6 +775,15 @@
 				>
 					<img src={item.src} alt="" draggable="false" />
 					{#if selectedId === item.id}
+						<button
+							type="button"
+							class="rotate-handle"
+							aria-label="Rotate sticker"
+							onpointerdown={(e) => beginRotate(e, item)}
+							onpointermove={onRotateMove}
+							onpointerup={endRotate}
+							onpointercancel={endRotate}
+						></button>
 						<button
 							type="button"
 							class="resize-handle"
@@ -717,6 +806,7 @@
 					style:height="{item.h}px"
 					style:font-size="{fontSizeOf(item)}px"
 					style:color={item.color ?? color}
+					style:--rot="{rotationOf(item)}deg"
 					role="group"
 					aria-label="Text box"
 					onpointerdown={(e) => beginPress(e, item)}
@@ -743,6 +833,15 @@
 					></textarea>
 					<button
 						type="button"
+						class="rotate-handle"
+						aria-label="Rotate text box"
+						onpointerdown={(e) => beginRotate(e, item)}
+						onpointermove={onRotateMove}
+						onpointerup={endRotate}
+						onpointercancel={endRotate}
+					></button>
+					<button
+						type="button"
 						class="resize-handle"
 						aria-label="Resize text box"
 						onpointerdown={(e) => beginResize(e, item)}
@@ -763,6 +862,7 @@
 					style:height={item.h ? `${item.h}px` : undefined}
 					style:font-size="{fontSizeOf(item)}px"
 					style:color={item.color ?? color}
+					style:--rot="{rotationOf(item)}deg"
 					onpointerdown={(e) => beginPress(e, item)}
 					onpointermove={onPressMove}
 					onpointerup={endPress}
@@ -957,6 +1057,7 @@
 		.tool,
 		.eraser-slot,
 		.resize-handle,
+		.rotate-handle,
 		.trash,
 		.trash-lid,
 		.trash-icon,
@@ -966,7 +1067,8 @@
 			animation: none;
 		}
 
-		.resize-handle {
+		.resize-handle,
+		.rotate-handle {
 			opacity: 1;
 		}
 	}
@@ -1042,12 +1144,15 @@
 		height: 100%;
 	}
 	.sticker-item {
+		--rot: 0deg;
 		position: absolute;
 		box-sizing: border-box;
 		touch-action: none;
 		user-select: none;
 		-webkit-user-select: none;
 		overflow: visible;
+		transform: rotate(var(--rot));
+		transform-origin: center center;
 
 		img {
 			display: block;
@@ -1068,8 +1173,7 @@
 
 		&.trashing {
 			opacity: 0.35;
-			transform: scale(0.45);
-			transform-origin: center center;
+			transform: rotate(var(--rot)) scale(0.45);
 		}
 
 		&.selected {
@@ -1078,6 +1182,7 @@
 		}
 	}
 	.text-box {
+		--rot: 0deg;
 		position: absolute;
 		box-sizing: border-box;
 		padding: 0;
@@ -1094,6 +1199,8 @@
 		user-select: none;
 		touch-action: none;
 		max-width: calc(100% - 0.5rem);
+		transform: rotate(var(--rot));
+		transform-origin: center center;
 
 		// Ring via box-shadow so it doesn't shift the text
 		&.empty {
@@ -1110,8 +1217,7 @@
 
 		&.trashing {
 			opacity: 0.35;
-			transform: scale(0.45);
-			transform-origin: center center;
+			transform: rotate(var(--rot)) scale(0.45);
 		}
 
 		&.editing {
@@ -1177,6 +1283,53 @@
 			height: 0.45rem;
 			border-right: 2px solid var(--select);
 			border-bottom: 2px solid var(--select);
+		}
+	}
+
+	.rotate-handle {
+		position: absolute;
+		right: -0.45rem;
+		top: -1.75rem;
+		width: 1.15rem;
+		height: 1.15rem;
+		padding: 0;
+		border: 2px solid var(--select);
+		border-radius: 999px;
+		background: var(--surface);
+		box-shadow: none;
+		touch-action: none;
+		cursor: grab;
+		opacity: 0;
+		animation: handle-in 180ms var(--ease-out) forwards;
+		transition: transform var(--duration-press) ease-out;
+
+		&:active {
+			cursor: grabbing;
+			transform: scale(0.96);
+		}
+
+		// Stem hook from the top-right corner up into the knob
+		&::before {
+			content: '';
+			position: absolute;
+			left: 50%;
+			top: 100%;
+			width: 2px;
+			height: 0.7rem;
+			margin-left: -1px;
+			background: var(--select);
+			pointer-events: none;
+		}
+
+		// Curved arrow cue inside the knob
+		&::after {
+			content: '';
+			position: absolute;
+			inset: 0.18rem;
+			border: 2px solid var(--select);
+			border-right-color: transparent;
+			border-radius: 999px;
+			pointer-events: none;
 		}
 	}
 

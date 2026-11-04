@@ -13,6 +13,7 @@ export type PersistedTextItem = {
 	w?: number;
 	h?: number;
 	fontSize?: number;
+	rotation?: number;
 };
 
 export type PersistedStickerItem = {
@@ -23,6 +24,7 @@ export type PersistedStickerItem = {
 	src: string;
 	w: number;
 	h: number;
+	rotation?: number;
 };
 
 export type PersistedItem = PersistedTextItem | PersistedStickerItem;
