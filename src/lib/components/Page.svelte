@@ -13,12 +13,22 @@
 		color?: string;
 		w?: number;
 		h?: number;
+		fontSize?: number;
 	};
 
 	const MIN_W = 96;
-	const MIN_H = 48;
+	const BASE_FONT = 20; // 1.25rem — keeps iOS from zooming on focus
+	const LINE_HEIGHT = 1.4;
+	const MIN_FONT = 12;
+	const MAX_FONT = 160;
 	const LONG_PRESS_MS = 420;
 	const MOVE_SLOP = 10;
+
+	function lineHeightPx(fontSize = BASE_FONT) {
+		return Math.ceil(fontSize * LINE_HEIGHT);
+	}
+
+	const MIN_H = lineHeightPx(BASE_FONT);
 
 	let tool = $state<Tool>('draw');
 	let drawMode = $state<DrawMode>('pencil');
@@ -32,8 +42,17 @@
 	let drawing = false;
 	let interacting = false;
 	let movingId = $state<number | null>(null);
+	/** Ignore the board tap that dismissed the editor so it doesn't place a replacement box */
+	let skipNextTextCreate = false;
 	let boxResize:
-		| { item: Item; startX: number; startY: number; startW: number; startH: number }
+		| {
+				item: Item;
+				startX: number;
+				startY: number;
+				startW: number;
+				startH: number;
+				startFont: number;
+		  }
 		| null = null;
 	let press: {
 		item: Item;
@@ -87,10 +106,23 @@
 	function defaultTextSize(x: number, y: number) {
 		const maxW = Math.max(MIN_W, board.clientWidth - x - 12);
 		const maxH = Math.max(MIN_H, board.clientHeight - y - 12);
+		const oneLine = lineHeightPx(BASE_FONT);
 		return {
 			w: Math.min(200, maxW),
-			h: Math.min(72, maxH)
+			h: Math.min(oneLine, maxH)
 		};
+	}
+
+	function fitEditorToContent(item: Item) {
+		if (!editor || editingId !== item.id) return;
+		const minH = lineHeightPx(fontSizeOf(item));
+		const maxH = Math.max(minH, board.clientHeight - item.y - 8);
+		// Measure from a collapsed height so Enter/wrap grows line by line
+		const prev = editor.style.height;
+		editor.style.height = `${minH}px`;
+		const next = clamp(editor.scrollHeight, minH, maxH);
+		editor.style.height = prev;
+		item.h = next;
 	}
 
 	function ensureSize(item: Item) {
@@ -99,6 +131,11 @@
 			item.w ??= size.w;
 			item.h ??= size.h;
 		}
+		item.fontSize ??= BASE_FONT;
+	}
+
+	function fontSizeOf(item: Item) {
+		return item.fontSize ?? BASE_FONT;
 	}
 
 	async function startEditing(id: number) {
@@ -220,10 +257,32 @@
 			ctx.beginPath();
 			ctx.moveTo(p.x, p.y);
 		} else {
-			commitText();
+			// Tap out while editing = confirm (keep the box). Don't start a new one.
+			if (editingId != null) {
+				commitText();
+				return;
+			}
+			// Blur often commits before this handler — ignore that same tap
+			if (skipNextTextCreate) {
+				skipNextTextCreate = false;
+				return;
+			}
+			// Only one empty box at a time — drop blanks, keep boxes that have text
 			const id = Date.now();
 			const size = defaultTextSize(p.x, p.y);
-			items.push({ id, kind: 'text', x: p.x, y: p.y, value: '', color, ...size });
+			items = [
+				...items.filter((i) => i.value.trim()),
+				{
+					id,
+					kind: 'text',
+					x: p.x,
+					y: p.y,
+					value: '',
+					color,
+					fontSize: BASE_FONT,
+					...size
+				}
+			];
 			startEditing(id);
 		}
 	}
@@ -245,23 +304,31 @@
 		e.stopPropagation();
 		e.preventDefault();
 		clearPress();
+		ensureSize(item);
 		interacting = true;
 		boxResize = {
 			item,
 			startX: e.clientX,
 			startY: e.clientY,
 			startW: item.w ?? MIN_W,
-			startH: item.h ?? MIN_H
+			startH: item.h ?? MIN_H,
+			startFont: fontSizeOf(item)
 		};
 		(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
 	}
 
 	function onResizeMove(e: PointerEvent) {
 		if (!boxResize) return;
+		const minH = lineHeightPx(MIN_FONT);
 		const maxW = Math.max(MIN_W, board.clientWidth - boxResize.item.x - 8);
-		const maxH = Math.max(MIN_H, board.clientHeight - boxResize.item.y - 8);
-		boxResize.item.w = clamp(boxResize.startW + (e.clientX - boxResize.startX), MIN_W, maxW);
-		boxResize.item.h = clamp(boxResize.startH + (e.clientY - boxResize.startY), MIN_H, maxH);
+		const maxH = Math.max(minH, board.clientHeight - boxResize.item.y - 8);
+		const w = clamp(boxResize.startW + (e.clientX - boxResize.startX), MIN_W, maxW);
+		const h = clamp(boxResize.startH + (e.clientY - boxResize.startY), minH, maxH);
+		boxResize.item.w = w;
+		boxResize.item.h = h;
+		// Scale type with the box (geometric mean keeps it even when aspect drifts)
+		const scale = Math.sqrt((w / boxResize.startW) * (h / boxResize.startH));
+		boxResize.item.fontSize = clamp(boxResize.startFont * scale, MIN_FONT, MAX_FONT);
 	}
 
 	function endResize() {
@@ -275,15 +342,28 @@
 		// Delay so resize/move can set interacting / restore focus first
 		requestAnimationFrame(() => {
 			if (interacting || press?.dragging || boxResize) return;
-			if (editingId === id && document.activeElement !== editor) commitText(id);
+			if (editingId === id && document.activeElement !== editor) {
+				commitText(id);
+				// The same tap that blurred often lands on the board — don't treat it as "add new"
+				skipNextTextCreate = true;
+			}
 		});
 	}
 
-	function onEditorKeydown(e: KeyboardEvent) {
+	function onEditorKeydown(e: KeyboardEvent, item: Item) {
 		if (e.key === 'Escape') {
 			e.preventDefault();
 			commitText();
+			return;
 		}
+		// Grow after Enter / wrap updates layout
+		if (e.key === 'Enter') {
+			queueMicrotask(() => fitEditorToContent(item));
+		}
+	}
+
+	function onEditorInput(item: Item) {
+		fitEditorToContent(item);
 	}
 
 	function onEditorPointerDown(e: PointerEvent, item: Item) {
@@ -310,6 +390,7 @@
 					style:top="{item.y}px"
 					style:width="{item.w}px"
 					style:height="{item.h}px"
+					style:font-size="{fontSizeOf(item)}px"
 					style:color={item.color ?? color}
 					role="group"
 					aria-label="Text box"
@@ -332,7 +413,8 @@
 						onpointerup={endPress}
 						onpointercancel={endPress}
 						onblur={() => onEditorBlur(item.id)}
-						onkeydown={onEditorKeydown}
+						onkeydown={(e) => onEditorKeydown(e, item)}
+						oninput={() => onEditorInput(item)}
 					></textarea>
 					<button
 						type="button"
@@ -353,6 +435,7 @@
 					style:top="{item.y}px"
 					style:width={item.w ? `${item.w}px` : undefined}
 					style:height={item.h ? `${item.h}px` : undefined}
+					style:font-size="{fontSizeOf(item)}px"
 					style:color={item.color ?? color}
 					onpointerdown={(e) => beginPress(e, item)}
 					onpointermove={onPressMove}
@@ -563,9 +646,12 @@
 	.text-box {
 		position: absolute;
 		box-sizing: border-box;
-		font-size: 1.125rem;
-		font-weight: 600;
-		line-height: 1.35;
+		padding: 0;
+		border: 0;
+		font-family: 'Sa Ard Pen', system-ui, sans-serif;
+		font-size: 1.25rem; // fallback before inline size is set
+		font-weight: normal;
+		line-height: 1.4;
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
 		word-break: break-word;
@@ -574,8 +660,9 @@
 		touch-action: none;
 		max-width: calc(100% - 0.5rem);
 
+		// Ring via box-shadow so it doesn't shift the text
 		&.empty {
-			border: 2px solid color-mix(in srgb, #f5c518 45%, transparent);
+			box-shadow: 0 0 0 2px color-mix(in srgb, #f5c518 45%, transparent);
 		}
 
 		&.moving {
@@ -585,19 +672,19 @@
 		&.editing {
 			overflow: visible;
 			background: transparent;
-			border: 2px solid #f5c518;
 			border-radius: 0;
-			box-shadow: none;
+			box-shadow: 0 0 0 2px #f5c518;
 			touch-action: none;
 			user-select: text;
 		}
 	}
 	.editor {
 		display: block;
+		box-sizing: border-box;
 		width: 100%;
 		height: 100%;
 		margin: 0;
-		padding: 0.35rem 0.45rem;
+		padding: 0;
 		border: 0;
 		outline: none;
 		resize: none;
@@ -605,9 +692,9 @@
 		caret-color: currentColor;
 		color: inherit;
 		font: inherit;
-		font-size: 1.125rem; // ≥16px — avoids iOS input zoom
-		font-weight: 600;
-		line-height: 1.35;
+		font-size: inherit;
+		font-weight: normal;
+		line-height: 1.4;
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
 		word-break: break-word;

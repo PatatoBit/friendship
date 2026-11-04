@@ -2,12 +2,45 @@ $paper: #fff8ef;
 $ink: #3a2e2a;
 $accent: #ff7aa2;
 
+@font-face {
+	font-family: 'iannnnn HEN';
+	src: url('/fonts/iannnnn-HEN-Thin.otf') format('opentype');
+	font-weight: 100;
+	font-style: normal;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: 'iannnnn HEN';
+	src: url('/fonts/iannnnn-HEN-Regular.otf') format('opentype');
+	font-weight: 400;
+	font-style: normal;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: 'iannnnn HEN';
+	src: url('/fonts/iannnnn-HEN-Bold.otf') format('opentype');
+	font-weight: 700;
+	font-style: normal;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: 'Sa Ard Pen';
+	src: url('/fonts/sa-ard-pen.otf') format('opentype');
+	font-weight: normal;
+	font-style: normal;
+	font-display: swap;
+}
+
 *, *::before, *::after { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
 body {
 	background: $paper;
 	color: $ink;
-	font-family: system-ui, -apple-system, 'Noto Sans Thai', sans-serif;
+	font-family: 'iannnnn HEN', system-ui, -apple-system, 'Noto Sans Thai', sans-serif;
+	font-weight: 400;
 	-webkit-tap-highlight-color: transparent;
 	overscroll-behavior: none;
 }
