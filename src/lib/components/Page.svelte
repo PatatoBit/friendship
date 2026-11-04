@@ -543,7 +543,6 @@
 		overflow: visible;
 	}
 	.draw-pill {
-		--pill-ease: cubic-bezier(0.23, 1, 0.32, 1);
 		display: grid;
 		grid-template-columns: auto 0fr;
 		align-items: center;
@@ -552,7 +551,7 @@
 		border-radius: 999px;
 		background: var(--surface);
 		box-shadow: 0 1px 4px oklch(0.3 0.02 52 / 0.1);
-		transition: grid-template-columns 220ms var(--pill-ease);
+		transition: grid-template-columns 220ms var(--ease-out-quint);
 
 		&.open {
 			grid-template-columns: auto 1fr;
@@ -565,19 +564,6 @@
 			height: 2.3rem;
 			box-shadow: none;
 			background: transparent;
-			transition:
-				background-color 150ms ease,
-				color 150ms ease,
-				transform 150ms ease;
-
-			&:active {
-				transform: scale(0.94);
-			}
-
-			&.active {
-				background: var(--accent);
-				color: var(--surface);
-			}
 		}
 	}
 	.eraser-slot {
@@ -585,12 +571,12 @@
 		min-width: 0;
 		overflow: hidden;
 		opacity: 0;
-		transform: translateX(-0.55rem) scale(0.86);
+		transform: translateX(-0.55rem) scale(0.92);
 		transform-origin: left center;
 		pointer-events: none;
 		transition:
-			opacity 180ms var(--pill-ease),
-			transform 220ms var(--pill-ease);
+			opacity 180ms var(--ease-out),
+			transform 220ms var(--ease-out);
 
 		&.open {
 			opacity: 1;
@@ -611,6 +597,20 @@
 		width: 2.6rem;
 		height: 2.6rem;
 		padding: 0;
+		transition:
+			background-color var(--duration-press) ease,
+			color var(--duration-press) ease,
+			transform var(--duration-press) ease-out;
+
+		&:active {
+			transform: scale(0.96);
+		}
+
+		&.active {
+			background: var(--accent);
+			color: var(--surface);
+		}
+
 		svg {
 			width: 1.25rem;
 			height: 1.25rem;
@@ -618,9 +618,15 @@
 	}
 	@media (prefers-reduced-motion: reduce) {
 		.draw-pill,
-		.draw-pill .tool,
-		.eraser-slot {
+		.tool,
+		.eraser-slot,
+		.resize-handle {
 			transition: none;
+			animation: none;
+		}
+
+		.resize-handle {
+			opacity: 1;
 		}
 	}
 	.board {
@@ -714,6 +720,14 @@
 		box-shadow: none;
 		touch-action: none;
 		cursor: nwse-resize;
+		opacity: 0;
+		animation: handle-in 180ms var(--ease-out) forwards;
+		transition: transform var(--duration-press) ease-out;
+
+		&:active {
+			transform: scale(0.96);
+		}
+
 		&::after {
 			content: '';
 			position: absolute;
@@ -723,6 +737,12 @@
 			height: 0.45rem;
 			border-right: 2px solid var(--select);
 			border-bottom: 2px solid var(--select);
+		}
+	}
+
+	@keyframes handle-in {
+		to {
+			opacity: 1;
 		}
 	}
 </style>

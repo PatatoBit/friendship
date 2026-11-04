@@ -5,6 +5,7 @@
 	}: { color?: string; presets?: string[] } = $props();
 
 	let open = $state(false);
+	let rendered = $state(false);
 	let hue = $state(20);
 	let sat = $state(40);
 	let val = $state(23);
@@ -94,8 +95,39 @@
 		}
 	}
 
-	function close() {
+	function show() {
+		if (rendered) {
+			open = true;
+			return;
+		}
+		rendered = true;
+		requestAnimationFrame(() => {
+			requestAnimationFrame(() => {
+				if (rendered) open = true;
+			});
+		});
+	}
+
+	function hide() {
+		if (!open) {
+			rendered = false;
+			return;
+		}
 		open = false;
+		if (typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches) {
+			rendered = false;
+		}
+	}
+
+	function toggle() {
+		if (open) hide();
+		else show();
+	}
+
+	function onPopoverTransitionEnd(e: TransitionEvent) {
+		if (e.target !== e.currentTarget) return;
+		if (e.propertyName !== 'opacity') return;
+		if (!open) rendered = false;
 	}
 
 	const thumbX = $derived(50 + Math.sin((hue * Math.PI) / 180) * (sat / 2));
@@ -109,12 +141,24 @@
 		style:background={color}
 		aria-label="Choose color"
 		aria-expanded={open}
-		onclick={() => (open = !open)}
+		onclick={toggle}
 	></button>
 
-	{#if open}
-		<button type="button" class="backdrop" aria-label="Close color picker" onclick={close}></button>
-		<div class="popover" role="dialog" aria-label="Color picker">
+	{#if rendered}
+		<button
+			type="button"
+			class="backdrop"
+			data-open={open ? '' : undefined}
+			aria-label="Close color picker"
+			onclick={hide}
+		></button>
+		<div
+			class="popover"
+			data-open={open ? '' : undefined}
+			role="dialog"
+			aria-label="Color picker"
+			ontransitionend={onPopoverTransitionEnd}
+		>
 			<div
 				class="wheel"
 				bind:this={wheelEl}
@@ -169,22 +213,33 @@
 		box-shadow:
 			0 0 0 1.5px oklch(0.3 0.02 52 / 0.25),
 			0 1px 4px oklch(0.3 0.02 52 / 0.1);
+		transition: transform var(--duration-press) ease-out;
+
+		&:active {
+			transform: scale(0.96);
+		}
 	}
 	.backdrop {
 		position: fixed;
 		inset: 0;
-		z-index: 20;
+		z-index: var(--z-backdrop);
 		padding: 0;
 		border-radius: 0;
-		background: transparent;
+		background: oklch(0.3 0.02 52 / 0.12);
 		box-shadow: none;
+		opacity: 0;
+		transition: opacity var(--duration-ui) var(--ease-out);
+
+		&[data-open] {
+			opacity: 1;
+		}
 	}
 	.popover {
 		position: absolute;
 		bottom: calc(100% + 0.6rem);
 		right: 0;
 		left: auto;
-		z-index: 21;
+		z-index: var(--z-popover);
 		width: min(16.5rem, calc(100vw - 1.5rem));
 		padding: 0.9rem;
 		background: var(--paper);
@@ -193,6 +248,24 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.75rem;
+		transform-origin: bottom right;
+		opacity: 0;
+		transform: scale(0.95) translateY(6px);
+		transition:
+			opacity var(--duration-ui) var(--ease-out),
+			transform var(--duration-ui) var(--ease-out);
+
+		&[data-open] {
+			opacity: 1;
+			transform: scale(1) translateY(0);
+		}
+
+		&:not([data-open]) {
+			transition-duration: var(--duration-exit);
+		}
+	}
+	.backdrop:not([data-open]) {
+		transition-duration: var(--duration-exit);
 	}
 	.wheel {
 		position: relative;
@@ -244,9 +317,34 @@
 		padding: 0;
 		border: 2px solid var(--surface);
 		box-shadow: 0 0 0 1px oklch(0.3 0.02 52 / 0.15);
+		transition:
+			transform var(--duration-press) ease-out,
+			box-shadow var(--duration-press) ease;
+
 		&.active {
-			outline: 2px solid var(--accent);
-			outline-offset: 1px;
+			box-shadow:
+				0 0 0 1px oklch(0.3 0.02 52 / 0.15),
+				0 0 0 3px var(--surface),
+				0 0 0 5px var(--accent);
+		}
+
+		&:active {
+			transform: scale(0.96);
+		}
+	}
+
+	@media (hover: hover) and (pointer: fine) {
+		.preset:hover:not(:active) {
+			transform: scale(1.06);
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.trigger,
+		.backdrop,
+		.popover,
+		.preset {
+			transition: none;
 		}
 	}
 </style>
