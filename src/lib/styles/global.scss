@@ -1,0 +1,22 @@
+$paper: #fff8ef;
+$ink: #3a2e2a;
+$accent: #ff7aa2;
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+	background: $paper;
+	color: $ink;
+	font-family: system-ui, -apple-system, 'Noto Sans Thai', sans-serif;
+	-webkit-tap-highlight-color: transparent;
+	overscroll-behavior: none;
+}
+button {
+	font: inherit;
+	border: 0;
+	border-radius: 999px;
+	padding: 0.6rem 1rem;
+	background: white;
+	box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+	&.active { background: $accent; color: white; }
+}
