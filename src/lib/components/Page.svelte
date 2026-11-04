@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
 	import { haptic } from '#lib/haptics.ts';
+	import { canvasToPngBlob, loadPage, savePage, type PersistedItem } from '#lib/page/persist.ts';
 	import ColorPicker from './ColorPicker.svelte';
 	import SizePicker from './SizePicker.svelte';
 	import StickerSheet from './StickerSheet.svelte';
@@ -38,6 +39,10 @@
 	const MAX_FONT = 160;
 	const MOVE_SLOP = 12;
 	const DEFAULT_BRUSH = 4;
+	/** Distance (px) where the trash lid starts opening */
+	const TRASH_APPROACH = 160;
+	/** Distance (px) that counts as “over the bin” */
+	const TRASH_HIT = 56;
 
 	function lineHeightPx(fontSize = BASE_FONT) {
 		return Math.ceil(fontSize * LINE_HEIGHT);
@@ -61,6 +66,10 @@
 	let drawY = 0;
 	let interacting = false;
 	let movingId = $state<number | null>(null);
+	let trashEl: HTMLDivElement | undefined = $state();
+	/** 0–1 how open the trash lid is (proximity) */
+	let trashOpen = $state(0);
+	let overTrash = $state(false);
 	/** Ignore the board tap that dismissed the editor so it doesn't place a replacement box */
 	let skipNextTextCreate = false;
 	let boxResize:
@@ -84,25 +93,116 @@
 		target: HTMLElement;
 		wasEditing: boolean;
 	} | null = null;
+	let saveTimer: ReturnType<typeof setTimeout> | null = null;
+	let ready = false;
 
 	function resize() {
 		const r = board.getBoundingClientRect();
 		const dpr = window.devicePixelRatio || 1;
-		const snapshot = canvas.width ? ctx.getImageData(0, 0, canvas.width, canvas.height) : null;
+		let backup: HTMLCanvasElement | null = null;
+		if (canvas.width && canvas.height) {
+			backup = document.createElement('canvas');
+			backup.width = canvas.width;
+			backup.height = canvas.height;
+			backup.getContext('2d')!.drawImage(canvas, 0, 0);
+		}
 		canvas.width = r.width * dpr;
 		canvas.height = r.height * dpr;
-		ctx.scale(dpr, dpr);
+		ctx = canvas.getContext('2d')!;
+		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 		ctx.lineCap = ctx.lineJoin = 'round';
-		if (snapshot) ctx.putImageData(snapshot, 0, 0);
+		if (backup) ctx.drawImage(backup, 0, 0, r.width, r.height);
+	}
+
+	function serializedItems(): PersistedItem[] {
+		return items.map((item) =>
+			isSticker(item)
+				? { id: item.id, kind: 'sticker', x: item.x, y: item.y, src: item.src, w: item.w, h: item.h }
+				: {
+						id: item.id,
+						kind: 'text',
+						x: item.x,
+						y: item.y,
+						value: item.value,
+						color: item.color,
+						w: item.w,
+						h: item.h,
+						fontSize: item.fontSize
+					}
+		);
+	}
+
+	async function persistNow() {
+		if (!ready || !board || !canvas) return;
+		try {
+			const drawing = await canvasToPngBlob(canvas);
+			await savePage({
+				drawing,
+				boardWidth: board.clientWidth,
+				boardHeight: board.clientHeight,
+				items: serializedItems()
+			});
+		} catch (err) {
+			console.error(err);
+		}
+	}
+
+	function scheduleSave() {
+		if (!ready) return;
+		if (saveTimer) clearTimeout(saveTimer);
+		saveTimer = setTimeout(() => {
+			saveTimer = null;
+			void persistNow();
+		}, 280);
+	}
+
+	async function restoreDrawing(blob: Blob) {
+		const bmp = await createImageBitmap(blob);
+		const r = board.getBoundingClientRect();
+		ctx.globalCompositeOperation = 'source-over';
+		ctx.clearRect(0, 0, r.width, r.height);
+		ctx.drawImage(bmp, 0, 0, r.width, r.height);
+		bmp.close();
 	}
 
 	onMount(() => {
 		ctx = canvas.getContext('2d')!;
 		resize();
 		window.addEventListener('resize', resize);
+
+		let cancelled = false;
+		(async () => {
+			try {
+				const saved = await loadPage();
+				if (cancelled || !saved) return;
+				items = saved.items as Item[];
+				if (saved.drawing) await restoreDrawing(saved.drawing);
+			} catch (err) {
+				console.error(err);
+			} finally {
+				if (!cancelled) ready = true;
+			}
+		})();
+
+		const onHide = () => {
+			if (saveTimer) {
+				clearTimeout(saveTimer);
+				saveTimer = null;
+			}
+			void persistNow();
+		};
+		window.addEventListener('pagehide', onHide);
+		document.addEventListener('visibilitychange', () => {
+			if (document.visibilityState === 'hidden') onHide();
+		});
+
 		return () => {
+			cancelled = true;
 			window.removeEventListener('resize', resize);
+			window.removeEventListener('pagehide', onHide);
+			if (saveTimer) clearTimeout(saveTimer);
 			clearPress();
+			void persistNow();
 		};
 	});
 
@@ -179,6 +279,7 @@
 			items = [...items, { id, kind: 'sticker', x, y, w, h, src }];
 			selectedId = id;
 			haptic('light');
+			scheduleSave();
 		};
 		img.onerror = () => haptic('error');
 		img.src = src;
@@ -197,12 +298,42 @@
 		const item = items.find((i) => i.id === id);
 		if (!item || !isText(item)) return;
 		item.value = item.value.trimEnd();
+		scheduleSave();
+	}
+
+	function resetTrash() {
+		trashOpen = 0;
+		overTrash = false;
 	}
 
 	function clearPress() {
 		if (!press) return;
 		press = null;
 		movingId = null;
+		resetTrash();
+	}
+
+	function deleteItem(id: number) {
+		items = items.filter((i) => i.id !== id);
+		if (editingId === id) editingId = null;
+		if (selectedId === id) selectedId = null;
+		scheduleSave();
+	}
+
+	function updateTrashProximity(clientX: number, clientY: number) {
+		if (!trashEl || movingId == null) {
+			resetTrash();
+			return;
+		}
+		const r = trashEl.getBoundingClientRect();
+		const cx = r.left + r.width / 2;
+		const cy = r.top + r.height / 2;
+		const dist = Math.hypot(clientX - cx, clientY - cy);
+		const open = clamp(1 - (dist - TRASH_HIT) / (TRASH_APPROACH - TRASH_HIT), 0, 1);
+		trashOpen = open;
+		const wasOver = overTrash;
+		overTrash = dist <= TRASH_HIT;
+		if (overTrash && !wasOver) haptic('medium');
 	}
 
 	function moveItemTo(item: Item, clientX: number, clientY: number, ox: number, oy: number) {
@@ -225,6 +356,7 @@
 		press.dragging = true;
 		interacting = true;
 		movingId = press.item.id;
+		resetTrash();
 		window.getSelection()?.removeAllRanges();
 		// Blur so the caret/keyboard don't fight the drag
 		if (press.wasEditing) editor?.blur();
@@ -268,16 +400,25 @@
 		}
 		e.preventDefault();
 		moveItemTo(press.item, e.clientX, e.clientY, press.ox, press.oy);
+		updateTrashProximity(e.clientX, e.clientY);
 	}
 
 	function endPress(e: PointerEvent) {
 		if (!press || press.pointerId !== e.pointerId) return;
 		const { item, dragging, wasEditing } = press;
+		const dropInTrash = dragging && overTrash;
 		press = null;
 		movingId = null;
+		resetTrash();
 		if (dragging) {
 			interacting = false;
+			if (dropInTrash) {
+				deleteItem(item.id);
+				haptic('error');
+				return;
+			}
 			haptic('medium');
+			scheduleSave();
 			return;
 		}
 		if (isSticker(item)) {
@@ -390,6 +531,7 @@
 		}
 		drawing = false;
 		ctx.globalCompositeOperation = 'source-over';
+		scheduleSave();
 	}
 
 	function beginResize(e: PointerEvent, item: Item) {
@@ -454,6 +596,7 @@
 		const wasText = isText(boxResize.item);
 		boxResize = null;
 		interacting = false;
+		scheduleSave();
 		if (wasText) editor?.focus({ preventScroll: true });
 	}
 
@@ -495,17 +638,50 @@
 	<div class="board" bind:this={board}>
 		<canvas
 			bind:this={canvas}
+			style:pointer-events={ready ? 'auto' : 'none'}
 			onpointerdown={down}
 			onpointermove={move}
 			onpointerup={up}
 			onpointercancel={up}
 		></canvas>
+		<div
+			bind:this={trashEl}
+			class="trash"
+			class:visible={movingId != null}
+			class:hot={overTrash}
+			style:--lid={trashOpen}
+			aria-hidden="true"
+		>
+			<svg class="trash-icon" viewBox="0 0 48 56" fill="none" aria-hidden="true">
+				<g class="trash-lid">
+					<path
+						class="trash-lid-top"
+						d="M14 18h20l-1.2-3.6a3 3 0 0 0-2.8-2.1h-4.4c-.4-1.5-1.7-2.3-3.1-2.3s-2.7.8-3.1 2.3h-4.4a3 3 0 0 0-2.8 2.1L14 18Z"
+						fill="currentColor"
+					/>
+					<rect class="trash-lid-lip" x="10" y="18" width="28" height="3.5" rx="1.2" fill="currentColor" />
+				</g>
+				<path
+					class="trash-can"
+					d="M15.5 24.5h17l-1.2 24.2a3.5 3.5 0 0 1-3.5 3.3h-7.6a3.5 3.5 0 0 1-3.5-3.3L15.5 24.5Z"
+					fill="currentColor"
+				/>
+				<path
+					class="trash-lines"
+					d="M20 29.5v16M24 29.5v16M28 29.5v16"
+					stroke="var(--surface)"
+					stroke-width="2.2"
+					stroke-linecap="round"
+				/>
+			</svg>
+		</div>
 		{#each items as item (item.id)}
 			{#if isSticker(item)}
 				<div
 					class="sticker-item"
 					class:selected={selectedId === item.id}
 					class:moving={movingId === item.id}
+					class:trashing={movingId === item.id && overTrash}
 					style:left="{item.x}px"
 					style:top="{item.y}px"
 					style:width="{item.w}px"
@@ -534,6 +710,7 @@
 				<div
 					class="text-box editing"
 					class:moving={movingId === item.id}
+					class:trashing={movingId === item.id && overTrash}
 					style:left="{item.x}px"
 					style:top="{item.y}px"
 					style:width="{item.w}px"
@@ -579,6 +756,7 @@
 					class="text-box"
 					class:empty={!item.value.trim()}
 					class:moving={movingId === item.id}
+					class:trashing={movingId === item.id && overTrash}
 					style:left="{item.x}px"
 					style:top="{item.y}px"
 					style:width={item.w ? `${item.w}px` : undefined}
@@ -778,7 +956,12 @@
 		.draw-pill,
 		.tool,
 		.eraser-slot,
-		.resize-handle {
+		.resize-handle,
+		.trash,
+		.trash-lid,
+		.trash-icon,
+		.sticker-item,
+		.text-box {
 			transition: none;
 			animation: none;
 		}
@@ -797,6 +980,60 @@
 		box-shadow: 0 2px 12px oklch(0.3 0.02 52 / 0.08);
 		overflow: hidden;
 		touch-action: none;
+	}
+	.trash {
+		position: absolute;
+		top: 0.85rem;
+		left: 0.85rem;
+		z-index: 30;
+		display: grid;
+		place-items: center;
+		width: 3.75rem;
+		height: 3.75rem;
+		border-radius: 999px;
+		color: var(--ink);
+		background: oklch(0.92 0.015 82 / 0.92);
+		box-shadow: 0 2px 10px oklch(0.3 0.02 52 / 0.12);
+		opacity: 0;
+		transform: scale(0.55);
+		pointer-events: none;
+		transition:
+			opacity 180ms var(--ease-out),
+			transform 220ms var(--ease-out-quint),
+			background-color 160ms ease,
+			color 160ms ease,
+			box-shadow 160ms ease;
+
+		&.visible {
+			opacity: 1;
+			transform: scale(calc(0.9 + var(--lid, 0) * 0.22));
+		}
+
+		&.hot {
+			color: var(--surface);
+			background: oklch(0.48 0.12 28);
+			box-shadow: 0 4px 16px oklch(0.4 0.1 28 / 0.28);
+			transform: scale(1.16);
+		}
+	}
+	.trash-icon {
+		width: 2.05rem;
+		height: auto;
+		overflow: visible;
+		transform-origin: 50% 70%;
+		transition: transform 160ms var(--ease-out);
+	}
+	.trash.hot .trash-icon {
+		transform: scale(1.06);
+	}
+	.trash-lid {
+		transform-box: view-box;
+		transform-origin: 14px 20px;
+		transform: rotate(calc(var(--lid, 0) * -52deg));
+		transition: transform 80ms linear;
+	}
+	.trash.hot .trash-lid {
+		transform: rotate(-62deg);
 	}
 	canvas {
 		position: absolute;
@@ -824,6 +1061,15 @@
 		&.moving {
 			opacity: 0.92;
 			cursor: grabbing;
+			transition:
+				opacity 140ms ease,
+				transform 140ms var(--ease-out);
+		}
+
+		&.trashing {
+			opacity: 0.35;
+			transform: scale(0.45);
+			transform-origin: center center;
 		}
 
 		&.selected {
@@ -857,6 +1103,15 @@
 		&.moving {
 			opacity: 0.92;
 			cursor: grabbing;
+			transition:
+				opacity 140ms ease,
+				transform 140ms var(--ease-out);
+		}
+
+		&.trashing {
+			opacity: 0.35;
+			transform: scale(0.45);
+			transform-origin: center center;
 		}
 
 		&.editing {
