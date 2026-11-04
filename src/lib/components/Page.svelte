@@ -43,6 +43,8 @@
 	let editor: HTMLTextAreaElement | undefined = $state();
 	let ctx: CanvasRenderingContext2D;
 	let drawing = false;
+	let drawX = 0;
+	let drawY = 0;
 	let interacting = false;
 	let movingId = $state<number | null>(null);
 	/** Ignore the board tap that dismissed the editor so it doesn't place a replacement box */
@@ -251,6 +253,14 @@
 		if (changed) haptic('selection');
 	}
 
+	function strokeTo(x: number, y: number) {
+		const mx = (drawX + x) / 2;
+		const my = (drawY + y) / 2;
+		ctx.quadraticCurveTo(drawX, drawY, mx, my);
+		drawX = x;
+		drawY = y;
+	}
+
 	function down(e: PointerEvent) {
 		const p = pos(e);
 		if (tool === 'draw') {
@@ -262,8 +272,13 @@
 			ctx.lineWidth = drawMode === 'eraser' ? Math.max(brushSize * 3, penWidth * 3) : penWidth;
 			ctx.strokeStyle = color;
 			ctx.globalCompositeOperation = drawMode === 'eraser' ? 'destination-out' : 'source-over';
+			drawX = p.x;
+			drawY = p.y;
 			ctx.beginPath();
 			ctx.moveTo(p.x, p.y);
+			// Dot so a tap still leaves a mark
+			ctx.lineTo(p.x, p.y);
+			ctx.stroke();
 		} else {
 			// Tap out while editing = confirm (keep the box). Don't start a new one.
 			if (editingId != null) {
@@ -298,13 +313,22 @@
 
 	function move(e: PointerEvent) {
 		if (!drawing) return;
-		const p = pos(e);
-		ctx.lineTo(p.x, p.y);
+		const coalesced = e.getCoalescedEvents?.() ?? [];
+		const samples = coalesced.length ? coalesced : [e];
+		for (const sample of samples) {
+			const p = pos(sample);
+			strokeTo(p.x, p.y);
+		}
 		ctx.stroke();
 	}
 
-	function up() {
+	function up(e?: PointerEvent) {
 		if (!drawing) return;
+		if (e) {
+			const p = pos(e);
+			ctx.lineTo(p.x, p.y);
+			ctx.stroke();
+		}
 		drawing = false;
 		ctx.globalCompositeOperation = 'source-over';
 	}
