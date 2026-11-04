@@ -101,9 +101,12 @@
 		dragging: boolean;
 		target: HTMLElement;
 		wasEditing: boolean;
+		hitText: boolean;
 	} | null = null;
 	let saveTimer: ReturnType<typeof setTimeout> | null = null;
 	let ready = $state(false);
+	/** Pixels to lift the board so the active text stays above the soft keyboard */
+	let keyboardOffset = $state(0);
 
 	function resize() {
 		const r = board.getBoundingClientRect();
@@ -215,10 +218,17 @@
 			if (document.visibilityState === 'hidden') onHide();
 		});
 
+		const vv = window.visualViewport;
+		const onViewport = () => syncKeyboardShift();
+		vv?.addEventListener('resize', onViewport);
+		vv?.addEventListener('scroll', onViewport);
+
 		return () => {
 			cancelled = true;
 			window.removeEventListener('resize', resize);
 			window.removeEventListener('pagehide', onHide);
+			vv?.removeEventListener('resize', onViewport);
+			vv?.removeEventListener('scroll', onViewport);
 			if (saveTimer) clearTimeout(saveTimer);
 			clearPress();
 			void persistNow();
@@ -230,6 +240,27 @@
 		editor.focus({ preventScroll: true });
 		const len = editor.value.length;
 		editor.setSelectionRange(len, len);
+		requestAnimationFrame(() => syncKeyboardShift());
+	});
+
+	$effect(() => {
+		const id = editingId;
+		if (id == null) {
+			keyboardOffset = 0;
+			return;
+		}
+		const item = items.find((i) => i.id === id);
+		if (!item || !isText(item)) {
+			keyboardOffset = 0;
+			return;
+		}
+		// Re-run when the box moves or grows while the keyboard is up
+		void item.x;
+		void item.y;
+		void item.w;
+		void item.h;
+		void item.value;
+		syncKeyboardShift();
 	});
 
 	function pos(e: PointerEvent) {
@@ -328,6 +359,7 @@
 	}
 
 	async function startEditing(id: number) {
+		selectedId = id;
 		editingId = id;
 		await tick();
 	}
@@ -337,10 +369,41 @@
 		if (forId != null && editingId !== forId) return;
 		const id = editingId;
 		editingId = null;
+		keyboardOffset = 0;
 		const item = items.find((i) => i.id === id);
 		if (!item || !isText(item)) return;
 		item.value = item.value.trimEnd();
 		scheduleSave();
+	}
+
+	function syncKeyboardShift() {
+		if (!board || editingId == null) {
+			keyboardOffset = 0;
+			return;
+		}
+		const item = items.find((i) => i.id === editingId);
+		if (!item || !isText(item)) {
+			keyboardOffset = 0;
+			return;
+		}
+		const vv = window.visualViewport;
+		if (!vv) {
+			keyboardOffset = 0;
+			return;
+		}
+		const obscured = Math.max(0, window.innerHeight - (vv.height + vv.offsetTop));
+		if (obscured < 12) {
+			keyboardOffset = 0;
+			return;
+		}
+		// Undo the current lift so we measure the box's natural place on the page
+		const boardRect = board.getBoundingClientRect();
+		const naturalTop = boardRect.top + keyboardOffset;
+		const itemBottom = naturalTop + item.y + (item.h ?? MIN_H);
+		const visibleBottom = vv.offsetTop + vv.height;
+		const pad = 28;
+		const overflow = itemBottom + pad - visibleBottom;
+		keyboardOffset = overflow > 0 ? Math.min(overflow, obscured + 48) : 0;
 	}
 
 	function resetTrash() {
@@ -408,7 +471,7 @@
 		if (!press) return false;
 		const { item, wasEditing } = press;
 		// Stickers / text only move once already selected (or editing)
-		return isSticker(item) ? selectedId === item.id : wasEditing;
+		return selectedId === item.id || wasEditing;
 	}
 
 	function startDragging() {
@@ -431,6 +494,9 @@
 		const p = pos(e);
 		const target = e.currentTarget as HTMLElement;
 		const wasEditing = editingId === item.id;
+		const hitText =
+			isText(item) &&
+			(wasEditing || !!(e.target as Element | null)?.closest?.('.text-content'));
 		// Idle: block scroll/selection so a slide can drag. Editing: allow caret on tap.
 		if (!wasEditing) e.preventDefault();
 		try {
@@ -447,7 +513,8 @@
 			oy: p.y - item.y,
 			dragging: false,
 			target,
-			wasEditing
+			wasEditing,
+			hitText
 		};
 	}
 
@@ -467,7 +534,7 @@
 
 	function endPress(e: PointerEvent) {
 		if (!press || press.pointerId !== e.pointerId) return;
-		const { item, dragging, wasEditing } = press;
+		const { item, dragging, wasEditing, hitText } = press;
 		const dropInTrash = dragging && overTrash;
 		press = null;
 		movingId = null;
@@ -481,6 +548,7 @@
 			}
 			haptic('medium');
 			scheduleSave();
+			if (wasEditing) requestAnimationFrame(() => syncKeyboardShift());
 			return;
 		}
 		if (isSticker(item)) {
@@ -489,11 +557,16 @@
 			haptic('light');
 			return;
 		}
-		// Short tap on an idle box → edit
+		// Short tap: characters (or empty + already selected) → edit; otherwise just select
 		if (!wasEditing) {
-			selectedId = null;
+			const empty = !item.value.trim();
+			const editOnTap = hitText || (empty && selectedId === item.id);
 			commitText();
-			startEditing(item.id);
+			if (editOnTap) {
+				startEditing(item.id);
+			} else {
+				selectedId = item.id;
+			}
 			haptic('light');
 		}
 	}
@@ -732,7 +805,12 @@
 </script>
 
 <div class="page">
-	<div class="board" bind:this={board}>
+	<div
+		class="board"
+		class:lifted={keyboardOffset > 0}
+		bind:this={board}
+		style:transform={keyboardOffset > 0 ? `translateY(${-keyboardOffset}px)` : undefined}
+	>
 		<canvas
 			bind:this={canvas}
 			style:pointer-events={ready ? 'auto' : 'none'}
@@ -881,6 +959,7 @@
 				<div
 					class="text-box"
 					class:empty={!item.value.trim()}
+					class:selected={selectedId === item.id}
 					class:moving={movingId === item.id}
 					class:trashing={movingId === item.id && overTrash}
 					style:left="{item.x}px"
@@ -896,7 +975,27 @@
 					onpointercancel={endPress}
 					role="presentation"
 				>
-					{item.value}
+					<span class="text-content">{item.value}</span>
+					{#if selectedId === item.id}
+						<button
+							type="button"
+							class="rotate-handle"
+							aria-label="Rotate text box"
+							onpointerdown={(e) => beginRotate(e, item)}
+							onpointermove={onRotateMove}
+							onpointerup={endRotate}
+							onpointercancel={endRotate}
+						></button>
+						<button
+							type="button"
+							class="resize-handle"
+							aria-label="Resize text box"
+							onpointerdown={(e) => beginResize(e, item)}
+							onpointermove={onResizeMove}
+							onpointerup={endResize}
+							onpointercancel={endResize}
+						></button>
+					{/if}
 				</div>
 			{/if}
 		{/each}

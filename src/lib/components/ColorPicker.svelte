@@ -3,7 +3,7 @@
 
 	let {
 		color = $bindable('#3a2e2a'),
-		presets = ['#3a2e2a', '#ff7aa2', '#6bb5ff', '#7bd389', '#ffc94d', '#ffffff', '#c084fc', '#fb7185']
+		presets = ['#3a2e2a', '#ee2f6c', '#1f85ff', '#25b84a', '#f0a010', '#ffffff', '#8f3de8', '#dc1e3a']
 	}: { color?: string; presets?: string[] } = $props();
 
 	let open = $state(false);
