@@ -7,12 +7,15 @@
 		blobToDataUrl,
 		loadStickers
 	} from '#lib/stickers/library.ts';
+	import { bitmapToPngBlob, loadImage } from '#lib/stickers/loadImage.ts';
 
 	type SheetSticker = {
 		id: string;
 		src: string;
 		createdAt: number;
 	};
+
+	type AddMode = 'sticker' | 'image';
 
 	let { onPick }: { onPick: (src: string) => void } = $props();
 
@@ -22,6 +25,7 @@
 	let busy = $state(false);
 	let previewUrl = $state<string | null>(null);
 	let error = $state<string | null>(null);
+	let addMode = $state<AddMode>('sticker');
 	let fileInput: HTMLInputElement | undefined = $state();
 
 	function clearPreview() {
@@ -82,6 +86,13 @@
 		else void show();
 	}
 
+	function setAddMode(mode: AddMode) {
+		if (addMode === mode || busy) return;
+		addMode = mode;
+		haptic('selection');
+		error = null;
+	}
+
 	function onPopoverTransitionEnd(e: TransitionEvent) {
 		if (e.target !== e.currentTarget) return;
 		if (e.propertyName !== 'opacity') return;
@@ -108,18 +119,28 @@
 		fileInput?.click();
 	}
 
+	async function prepareImage(file: Blob): Promise<Blob> {
+		const bitmap = await loadImage(file);
+		try {
+			return await bitmapToPngBlob(bitmap);
+		} finally {
+			bitmap.close();
+		}
+	}
+
 	async function onFileChange(e: Event) {
 		const input = e.currentTarget as HTMLInputElement;
 		const file = input.files?.[0];
 		input.value = '';
 		if (!file || !file.type.startsWith('image/')) return;
 
+		const mode = addMode;
 		clearPreview();
 		previewUrl = URL.createObjectURL(file);
 		busy = true;
 		error = null;
 		try {
-			const png = await createSticker(file);
+			const png = mode === 'sticker' ? await createSticker(file) : await prepareImage(file);
 			const saved = await addSticker(png);
 			const sheetItem: SheetSticker = {
 				id: saved.id,
@@ -133,7 +154,9 @@
 			error =
 				err instanceof Error && /quota/i.test(err.message)
 					? 'Storage full — remove some stickers and try again.'
-					: 'Couldn’t make that sticker. Try another photo.';
+					: mode === 'sticker'
+						? 'Couldn’t make that sticker. Try another photo.'
+						: 'Couldn’t add that image. Try another photo.';
 			haptic('error');
 		} finally {
 			busy = false;
@@ -209,6 +232,26 @@
 		>
 			<header class="header">
 				<h2>Stickers</h2>
+				<div class="mode" role="group" aria-label="Add as">
+					<button
+						type="button"
+						class="mode-btn"
+						aria-pressed={addMode === 'sticker'}
+						disabled={busy}
+						onclick={() => setAddMode('sticker')}
+					>
+						Sticker
+					</button>
+					<button
+						type="button"
+						class="mode-btn"
+						aria-pressed={addMode === 'image'}
+						disabled={busy}
+						onclick={() => setAddMode('image')}
+					>
+						Image
+					</button>
+				</div>
 			</header>
 
 			{#if error}
@@ -219,7 +262,7 @@
 				<button
 					type="button"
 					class="cell upload"
-					aria-label="Upload photo"
+					aria-label={addMode === 'sticker' ? 'Upload sticker photo' : 'Upload image'}
 					disabled={busy}
 					onclick={openFilePicker}
 				>
@@ -232,14 +275,14 @@
 							d="M12 5v14M5 12h14"
 						/>
 					</svg>
-					<span>Upload</span>
+					<span>{addMode === 'sticker' ? 'Sticker' : 'Image'}</span>
 				</button>
 
 				{#if busy && previewUrl}
 					<div class="cell processing" aria-live="polite" aria-busy="true">
 						<img src={previewUrl} alt="" draggable="false" />
 						<div class="overlay">
-							<span>Making sticker…</span>
+							<span>{addMode === 'sticker' ? 'Making sticker…' : 'Adding image…'}</span>
 						</div>
 					</div>
 				{/if}
@@ -257,7 +300,11 @@
 			</div>
 
 			{#if !stickers.length && !busy}
-				<p class="empty">Upload a photo to cut a sticker.</p>
+				<p class="empty">
+					{addMode === 'sticker'
+						? 'Upload a photo to cut a sticker.'
+						: 'Upload a photo to add as an image.'}
+				</p>
 			{/if}
 		</div>
 	{/if}
@@ -357,7 +404,7 @@
 
 	.header {
 		display: flex;
-		align-items: baseline;
+		align-items: center;
 		justify-content: space-between;
 		gap: 0.5rem;
 		padding: 0 0.15rem;
@@ -367,6 +414,43 @@
 			font-size: 0.95rem;
 			font-weight: 700;
 			letter-spacing: 0.01em;
+		}
+	}
+
+	.mode {
+		display: inline-flex;
+		padding: 0.15rem;
+		border-radius: 999px;
+		background: color-mix(in oklch, var(--surface) 55%, var(--ink) 8%);
+	}
+
+	.mode-btn {
+		padding: 0.28rem 0.65rem;
+		border-radius: 999px;
+		border: none;
+		background: transparent;
+		box-shadow: none;
+		color: color-mix(in oklch, var(--ink) 72%, transparent);
+		font-size: 0.72rem;
+		font-weight: 700;
+		letter-spacing: 0.01em;
+		line-height: 1;
+		transition:
+			background-color var(--duration-press) ease,
+			color var(--duration-press) ease;
+
+		&[aria-pressed='true'] {
+			background: var(--paper);
+			color: var(--ink);
+			box-shadow: 0 1px 3px oklch(0.3 0.02 52 / 0.12);
+		}
+
+		&:disabled {
+			opacity: 0.55;
+		}
+
+		&:active:not(:disabled) {
+			transform: scale(0.97);
 		}
 	}
 
@@ -491,7 +575,8 @@
 		.tool,
 		.backdrop,
 		.popover,
-		.cell {
+		.cell,
+		.mode-btn {
 			transition: none;
 		}
 	}
